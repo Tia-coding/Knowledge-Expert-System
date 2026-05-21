@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NRSC Documents Knowledge Expert System</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="login-heading">
+      <h1>NRSC</h1>
+      <p><strong>National Remote Sensing Centre</strong><br>Documents Knowledge Expert System</p>
+    </div>
+    <form id="loginForm">
+      <label for="username">Username</label>
+      <input id="username" autocomplete="username" placeholder="Enter username" required>
+      
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="Enter password" required>
+      
+      <label for="loginRole">Login As</label>
+      <select id="loginRole">
+        <option value="admin">Administrator</option>
+        <option value="user">User</option>
+      </select>
+      
+      <button class="btn-primary" type="submit" style="width:100%; margin-top:22px;">Login</button>
+    </form>
+    <p class="login-note">Authorized Access Only</p>
+  </main>
+  
+  <div id="toast" class="toast"></div>
+  
+  <script src="/js/api.js"></script>
+  <script src="/js/login.js"></script>
+</body>
+</html>

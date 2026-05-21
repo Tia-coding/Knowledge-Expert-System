@@ -1,0 +1,903 @@
+import gc
+import logging
+import mimetypes
+import re
+import time
+from pathlib import Path
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+
+from fastapi.responses import FileResponse
+
+from sqlalchemy.orm import Session
+
+from app.auth.security import (
+    decode_access_token,
+    require_admin,
+)
+
+from app.config.settings import get_settings
+
+from app.database.session import (
+    SessionLocal,
+    get_db,
+)
+
+from app.models.models import (
+    Document,
+    User,
+)
+
+from app.rag.vector_store import (
+    get_vector_store,
+)
+
+from app.schemas.schemas import (
+    DocumentOut,
+)
+
+from app.services.audit_service import (
+    audit,
+)
+
+from app.services.document_processor import (
+    extract_document,
+    sha256_file,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["Documents"])
+
+settings = get_settings()
+
+ALLOWED_EXTENSIONS = {
+    ".pdf",
+    ".docx",
+    ".txt",
+    ".md",
+}
+
+MAX_FILE_SIZE = 100 * 1024 * 1024
+
+# Document IDs deleted while a background index task may still be running.
+_CANCELLED_INDEX_IDS: set[int] = set()
+
+
+# =========================================================
+# INDEX CANCELLATION (FORCE DELETE DURING PROCESSING)
+# =========================================================
+
+def mark_index_cancelled(document_id: int) -> None:
+    _CANCELLED_INDEX_IDS.add(document_id)
+
+
+def clear_index_cancelled(document_id: int) -> None:
+    _CANCELLED_INDEX_IDS.discard(document_id)
+
+
+def indexing_was_cancelled(document_id: int) -> bool:
+    return document_id in _CANCELLED_INDEX_IDS
+
+
+def should_abort_indexing(
+    document_id: int,
+    db: Session,
+) -> bool:
+    if indexing_was_cancelled(document_id):
+        return True
+
+    return (
+        db.query(Document)
+        .filter(Document.id == document_id)
+        .first()
+        is None
+    )
+
+
+# =========================================================
+# SAFE FILE DELETE (WINDOWS FILE LOCKING)
+# =========================================================
+
+def safe_unlink(
+    file_path: Path,
+    retries: int = 8,
+    delay_seconds: float = 0.5,
+) -> bool:
+    """Remove a file with retries for Windows indexing locks."""
+
+    if not file_path.exists():
+        return True
+
+    for attempt in range(retries):
+        try:
+            file_path.unlink()
+            return True
+        except PermissionError:
+            gc.collect()
+            if attempt < retries - 1:
+                time.sleep(delay_seconds * (attempt + 1))
+        except OSError:
+            if attempt < retries - 1:
+                time.sleep(delay_seconds * (attempt + 1))
+
+    return not file_path.exists()
+
+
+def force_remove_upload_file(
+    file_path: Path,
+    document_id: int,
+) -> tuple[bool, str | None]:
+    """
+    Delete upload file with extended retries; rename if still locked.
+    Returns (removed, warning_message).
+    """
+
+    if not file_path.exists():
+        return True, None
+
+    if safe_unlink(file_path, retries=12, delay_seconds=0.75):
+        return True, None
+
+    quarantine = file_path.with_name(
+        f"{file_path.name}.deleted.{document_id}"
+    )
+
+    try:
+        if file_path.exists():
+            file_path.rename(quarantine)
+        if safe_unlink(quarantine, retries=8, delay_seconds=0.75):
+            return True, None
+    except OSError as exc:
+        logger.warning(
+            "Could not rename locked upload for document %s: %s",
+            document_id,
+            exc,
+        )
+
+    if not file_path.exists() and not quarantine.exists():
+        return True, None
+
+    if quarantine.exists() and not file_path.exists():
+        return True, (
+            "Document removed; a temporary file may be "
+            "cleaned up after indexing stops."
+        )
+
+    return False, None
+
+
+def content_disposition(
+    disposition: str,
+    filename: str,
+) -> str:
+    safe_name = (
+        filename.replace("\\", "_")
+        .replace('"', "_")
+        .strip() or "document"
+    )
+    return f'{disposition}; filename="{safe_name}"'
+
+
+# =========================================================
+# SAFE FILE NAME
+# =========================================================
+
+def safe_stored_filename(
+    original_filename: str,
+    upload_dir: str,
+) -> str:
+
+    original = Path(
+        original_filename or "document"
+    ).name
+
+    stem = Path(original).stem
+
+    suffix = Path(original).suffix.lower()
+
+    safe_stem = re.sub(
+        r"[^A-Za-z0-9._-]+",
+        "_",
+        stem,
+    ).strip("._-") or "document"
+
+    candidate = (
+        f"{safe_stem}{suffix}"
+    )
+
+    destination = (
+        Path(upload_dir)
+        / candidate
+    )
+
+    counter = 1
+
+    while destination.exists():
+
+        candidate = (
+            f"{safe_stem}_{counter}"
+            f"{suffix}"
+        )
+
+        destination = (
+            Path(upload_dir)
+            / candidate
+        )
+
+        counter += 1
+
+    return candidate
+
+
+# =========================================================
+# BACKGROUND INDEXING
+# =========================================================
+
+def index_document(
+    document_id: int,
+) -> None:
+
+    db = SessionLocal()
+
+    try:
+
+        doc = (
+            db.query(Document)
+            .filter(
+                Document.id == document_id
+            )
+            .first()
+        )
+
+        if not doc or should_abort_indexing(document_id, db):
+            return
+
+        logger.info(
+            f"Starting indexing for "
+            f"document {doc.id}: "
+            f"{doc.filename}"
+        )
+
+        doc.status = "Processing"
+
+        db.commit()
+
+        if should_abort_indexing(document_id, db):
+            logger.info(
+                "Indexing aborted before extraction "
+                "for document %s",
+                document_id,
+            )
+            return
+
+        path = (
+            Path(settings.upload_dir)
+            / doc.stored_filename
+        )
+
+        if not path.exists():
+
+            if should_abort_indexing(document_id, db):
+                return
+
+            doc.status = "Failed"
+
+            doc.error_message = (
+                "Uploaded file not found."
+            )
+
+            db.commit()
+
+            return
+
+        result = extract_document(
+
+            path,
+
+            doc.filename,
+
+            doc.document_type,
+
+        )
+
+        if should_abort_indexing(document_id, db):
+            logger.info(
+                "Indexing aborted after extraction "
+                "for document %s",
+                document_id,
+            )
+            return
+
+        doc = (
+            db.query(Document)
+            .filter(Document.id == document_id)
+            .first()
+        )
+
+        if not doc:
+            return
+
+        if not result.chunks:
+
+            doc.status = "Failed"
+
+            doc.error_message = (
+                "No searchable content found."
+            )
+
+            db.commit()
+
+            return
+
+        vector_store = (
+            get_vector_store()
+        )
+
+        try:
+
+            vector_store.delete_document(
+                doc.id
+            )
+
+        except Exception:
+
+            pass
+
+        if should_abort_indexing(document_id, db):
+            logger.info(
+                "Indexing aborted before vector write "
+                "for document %s",
+                document_id,
+            )
+            return
+
+        vector_store.add_document_chunks(
+
+            doc.id,
+
+            result.chunks,
+
+        )
+
+        doc = (
+            db.query(Document)
+            .filter(Document.id == document_id)
+            .first()
+        )
+
+        if not doc or should_abort_indexing(document_id, db):
+            try:
+                vector_store.delete_document(document_id)
+            except Exception:
+                pass
+            logger.info(
+                "Indexing aborted after vector write "
+                "for document %s; rolled back chunks",
+                document_id,
+            )
+            return
+
+        doc.status = "Indexed"
+
+        doc.chunk_count = len(
+            result.chunks
+        )
+
+        doc.page_count = (
+            result.page_count
+        )
+
+        doc.table_count = (
+            result.table_count
+        )
+
+        doc.error_message = None
+
+        db.commit()
+
+        logger.info(
+            f"Successfully indexed "
+            f"document {doc.id}"
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            f"Indexing failed: {str(exc)}"
+        )
+
+        try:
+
+            if should_abort_indexing(document_id, db):
+                return
+
+            doc = (
+                db.query(Document)
+                .filter(Document.id == document_id)
+                .first()
+            )
+
+            if doc:
+
+                doc.status = "Failed"
+
+                doc.error_message = str(exc)
+
+                db.commit()
+
+        except Exception:
+
+            db.rollback()
+
+    finally:
+
+        clear_index_cancelled(document_id)
+
+        db.close()
+
+
+# =========================================================
+# UPLOAD
+# =========================================================
+
+@router.post(
+    "/upload",
+    response_model=list[DocumentOut],
+)
+async def upload_documents(
+
+    background_tasks: BackgroundTasks,
+
+    request: Request,
+
+    files: list[UploadFile] = File(...),
+
+    db: Session = Depends(get_db),
+
+    current_user: User = Depends(
+        require_admin
+    ),
+
+):
+
+    created = []
+
+    upload_path = Path(
+        settings.upload_dir
+    )
+
+    upload_path.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    for file in files:
+
+        if not file.filename:
+
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid filename.",
+            )
+
+        suffix = Path(
+            file.filename
+        ).suffix.lower()
+
+        if (
+            suffix
+            not in ALLOWED_EXTENSIONS
+        ):
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported file type: "
+                    f"{suffix}"
+                ),
+            )
+
+        stored_filename = (
+            safe_stored_filename(
+                file.filename,
+                settings.upload_dir,
+            )
+        )
+
+        destination = (
+            upload_path
+            / stored_filename
+        )
+
+        size = 0
+
+        try:
+
+            with destination.open("wb") as out:
+
+                while chunk := await file.read(
+                    1024 * 1024
+                ):
+
+                    size += len(chunk)
+
+                    if size > MAX_FILE_SIZE:
+
+                        destination.unlink(
+                            missing_ok=True
+                        )
+
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "File exceeds "
+                                "100MB limit."
+                            ),
+                        )
+
+                    out.write(chunk)
+
+        finally:
+
+            await file.close()
+
+        content_hash = sha256_file(
+            destination
+        )
+
+        duplicate = (
+            db.query(Document)
+            .filter(
+                Document.content_hash
+                == content_hash
+            )
+            .first()
+        )
+
+        if duplicate:
+
+            destination.unlink(
+                missing_ok=True
+            )
+
+            created.append(duplicate)
+
+            continue
+
+        doc = Document(
+
+            filename=(
+                file.filename
+                or destination.name
+            ),
+
+            stored_filename=stored_filename,
+
+            content_hash=content_hash,
+
+            document_type=suffix.lstrip("."),
+
+            size_bytes=size,
+
+            status="Uploaded",
+
+            uploaded_by=current_user.id,
+
+        )
+
+        db.add(doc)
+
+        db.commit()
+
+        db.refresh(doc)
+
+        background_tasks.add_task(
+            index_document,
+            doc.id,
+        )
+
+        audit(
+
+            db,
+
+            "UPLOAD_DOCUMENT",
+
+            file.filename,
+
+            current_user,
+
+            (
+                request.client.host
+                if request.client
+                else None
+            ),
+
+        )
+
+        created.append(doc)
+
+    return created
+
+
+# =========================================================
+# LIST DOCUMENTS
+# =========================================================
+
+@router.get(
+    "/documents",
+    response_model=list[DocumentOut],
+)
+async def documents(
+
+    db: Session = Depends(get_db),
+
+    current_user: User = Depends(
+        require_admin
+    ),
+
+):
+
+    return (
+
+        db.query(Document)
+
+        .order_by(
+            Document.created_at.desc()
+        )
+
+        .all()
+
+    )
+
+
+# =========================================================
+# OPEN / DOWNLOAD DOCUMENT
+# =========================================================
+
+@router.get("/download/{document_id}")
+async def download_document(
+
+    document_id: int,
+
+    download: bool = Query(False),
+
+    db: Session = Depends(get_db),
+
+    current_user: User = Depends(
+        require_admin
+    ),
+
+):
+
+    doc = (
+
+        db.query(Document)
+
+        .filter(
+            Document.id == document_id
+        )
+
+        .first()
+
+    )
+
+    if not doc:
+
+        raise HTTPException(
+
+            status_code=404,
+
+            detail="Document not found",
+
+        )
+
+    file_path = (
+        Path(settings.upload_dir)
+        / doc.stored_filename
+    )
+
+    if not file_path.exists():
+
+        raise HTTPException(
+
+            status_code=404,
+
+            detail="File not found",
+
+        )
+
+    media_type, _ = mimetypes.guess_type(
+        str(file_path)
+    )
+
+    if not media_type:
+
+        media_type = (
+            "application/octet-stream"
+        )
+
+    disposition = (
+        "attachment"
+        if download
+        else "inline"
+    )
+
+    return FileResponse(
+
+        path=str(file_path),
+
+        media_type=media_type,
+
+        filename=doc.filename,
+
+        headers={
+
+            "Content-Disposition": content_disposition(
+                disposition,
+                doc.filename,
+            ),
+
+        },
+
+    )
+
+# =========================================================
+# DELETE DOCUMENT
+# =========================================================
+
+@router.delete("/documents/{document_id}")
+async def delete_document(
+
+    document_id: int,
+
+    request: Request,
+
+    db: Session = Depends(get_db),
+
+    current_user: User = Depends(
+        require_admin
+    ),
+
+):
+
+    doc = (
+
+        db.query(Document)
+
+        .filter(
+            Document.id == document_id
+        )
+
+        .first()
+
+    )
+
+    if not doc:
+
+        raise HTTPException(
+
+            status_code=404,
+
+            detail="Document not found",
+
+        )
+
+    file_path = (
+        Path(settings.upload_dir)
+        / doc.stored_filename
+    )
+
+    filename = doc.filename
+    was_processing = doc.status == "Processing"
+
+    mark_index_cancelled(document_id)
+
+    try:
+
+        try:
+
+            vector_store = get_vector_store()
+
+            vector_store.delete_document(doc.id)
+
+        except Exception:
+
+            logger.warning(
+                "Vector cleanup failed for document %s",
+                doc.id,
+                exc_info=True,
+            )
+
+        db.delete(doc)
+
+        db.commit()
+
+        file_removed, file_warning = force_remove_upload_file(
+            file_path,
+            document_id,
+        )
+
+        audit(
+
+            db,
+
+            "DELETE_DOCUMENT",
+
+            f"Deleted: {filename}",
+
+            current_user,
+
+            (
+                request.client.host
+                if request.client
+                else None
+            ),
+
+        )
+
+        message = "Document deleted successfully"
+
+        if was_processing:
+            message = (
+                "Document deleted successfully "
+                "(indexing was cancelled)"
+            )
+
+        if file_warning:
+            message = f"{message}. {file_warning}"
+
+        if not file_removed:
+
+            logger.warning(
+                "Document %s removed from database but "
+                "upload file remains locked: %s",
+                document_id,
+                file_path,
+            )
+
+            message = (
+                f"{message} The upload file is still in use "
+                "and will be removed when indexing releases it."
+            )
+
+        return {
+
+            "success": True,
+
+            "message": message,
+
+            "file_removed": file_removed,
+
+        }
+
+    except HTTPException:
+
+        db.rollback()
+
+        raise
+
+    except Exception as exc:
+
+        db.rollback()
+
+        logger.exception(
+            f"Delete failed: {str(exc)}"
+        )
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail="Failed to delete document",
+
+        )

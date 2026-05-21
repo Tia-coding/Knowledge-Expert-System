@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+logs/
+
+# Databases
+*.db
+*.sqlite3
+
+# Chroma
+chroma_db/
+
+# Uploads
+uploads/
+
+# Environment
+.env
+
+# Node
+node_modules/
+
+# VSCode
+.vscode/

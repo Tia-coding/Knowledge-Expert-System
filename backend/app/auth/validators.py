@@ -141,15 +141,20 @@ def validate_role(role: str) -> str:
         role: Role name
         
     Returns:
-        Validated role
+        Validated role (normalized to lowercase)
         
     Raises:
         ValidationError: If role is invalid
     """
-    if role not in ("admin", "user"):
+    if not role:
+        raise ValidationError("Role is required")
+    
+    normalized = role.lower().strip()
+    
+    if normalized not in ("admin", "user"):
         raise ValidationError(f"Invalid role '{role}'")
     
-    return role
+    return normalized
 
 
 def validate_search_query(query: str) -> str:

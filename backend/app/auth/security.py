@@ -284,7 +284,7 @@ def get_current_user(
     # VERIFY ROLE
     # =====================================================
 
-    if user.role != role:
+    if user.role.lower() != role.lower():
 
         logger.warning(
 
@@ -314,7 +314,7 @@ def require_admin(
     Require administrator role.
     """
 
-    if current_user.role != "admin":
+    if current_user.role.lower() != "admin":
 
         logger.warning(
 
@@ -471,11 +471,8 @@ def verify_user_credentials(
     # =====================================================
 
     if (
-
         role is not None
-
-        and user.role != role
-
+        and user.role.lower() != role.lower()
     ):
 
         logger.warning(

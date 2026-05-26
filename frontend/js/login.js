@@ -84,7 +84,7 @@ loginForm.addEventListener("submit", async event => {
     }
 
     // Verify role matches requested role (critical security check)
-    if (data.role !== requestedRole) {
+    if (!data.role || data.role.toLowerCase() !== requestedRole.toLowerCase()) {
       throw new Error("Authentication role mismatch. Access denied.");
     }
 

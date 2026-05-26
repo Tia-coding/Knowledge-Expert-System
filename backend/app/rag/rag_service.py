@@ -10,6 +10,7 @@ from app.models.models import User
 from app.rag.ollama_client import OllamaClient
 from app.rag.prompt_engineering import PromptEngineer
 from app.rag.vector_store import get_vector_store
+from app.rag.coherence_analyzer import CoherenceAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +116,9 @@ class RAGService:
                     "confidence": 0.0,
                 }
 
-            # =====================================================
-            # BUILD CONTEXT
-            # =====================================================
+             # =====================================================
+             # BUILD CONTEXT
+             # =====================================================
 
             context_blocks, sources = (
                 self._build_context(
@@ -126,7 +127,7 @@ class RAGService:
             )
 
             # =====================================================
-            # BUILD PROMPT
+            # BUILD PROMPT WITH COHERENCE SIGNALS
             # =====================================================
 
             prompt = (
@@ -135,6 +136,33 @@ class RAGService:
                     context_blocks,
                 )
             )
+
+            # Add dynamic coherence and synthesis signals
+            coherence_signal = (
+                PromptEngineer.build_coherence_signal(
+                    context_blocks
+                )
+            )
+            synthesis_signal = (
+                PromptEngineer.build_context_synthesis_signal(
+                    context_blocks
+                )
+            )
+            continuation_signal = (
+                PromptEngineer.build_continuation_signal(
+                    question
+                )
+            )
+
+            if coherence_signal or synthesis_signal:
+                prompt += (
+                    f"\n\n"
+                    f"SYNTHESIS GUIDANCE:\n"
+                    f"- {synthesis_signal}\n"
+                    f"- {coherence_signal}"
+                )
+                if continuation_signal:
+                    prompt += f"\n- {continuation_signal}"
 
             # =====================================================
             # GENERATE ANSWER
@@ -229,6 +257,32 @@ class RAGService:
                     answer
                 )
             )
+
+            # =====================================================
+            # VALIDATE AND ENHANCE COHERENCE
+            # =====================================================
+
+            coherence_analysis = (
+                CoherenceAnalyzer.score_answer_coherence(
+                    answer
+                )
+            )
+
+            # If answer is low coherence, try refinement
+            if (
+                not coherence_analysis["is_coherent"]
+                and answer
+                and len(answer) > 50
+            ):
+
+                refined_answer = (
+                    self._enhance_answer_coherence(
+                        answer
+                    )
+                )
+
+                if refined_answer:
+                    answer = refined_answer
 
             # =====================================================
             # FINAL VALIDATION
@@ -487,7 +541,14 @@ class RAGService:
 
         seen_sources = set()
 
-        for row in rows:
+        # Reorder chunks for coherence
+        ordered_rows = (
+            CoherenceAnalyzer.order_chunks_for_coherence(
+                rows
+            )
+        )
+
+        for row in ordered_rows:
 
             metadata = row.get(
                 "metadata",
@@ -890,3 +951,160 @@ PAGE: {page}
             item in answer_lower
             for item in indicators
         )
+
+    # =========================================================
+    # ANSWER COHERENCE ENHANCEMENT
+    # =========================================================
+
+    def _enhance_answer_coherence(
+        self,
+        answer: str,
+    ) -> str:
+        """
+        Enhance answer coherence by improving transitions
+        and paragraph structure.
+        """
+        paragraphs = answer.split("\n\n")
+
+        if len(paragraphs) <= 1:
+            return answer
+
+        # Detect major topic shifts and add transitions
+        enhanced_paragraphs = []
+
+        for i, para in enumerate(paragraphs):
+
+            if i == 0:
+                enhanced_paragraphs.append(para)
+                continue
+
+            # Check if paragraph seems disconnected
+            prev_para = paragraphs[i - 1]
+
+            is_disconnected = (
+                self._detect_paragraph_disconnect(
+                    prev_para,
+                    para,
+                )
+            )
+
+            if is_disconnected:
+
+                # Try to add natural transition
+                transition = (
+                    self._suggest_transition(
+                        prev_para,
+                        para,
+                    )
+                )
+
+                if transition:
+                    para = f"{transition} {para}"
+
+            enhanced_paragraphs.append(para)
+
+        return "\n\n".join(
+            enhanced_paragraphs
+        )
+
+    def _detect_paragraph_disconnect(
+        self,
+        prev_text: str,
+        curr_text: str,
+    ) -> bool:
+        """
+        Detect if two paragraphs are disconnected
+        semantically.
+        """
+        prev_words = set(
+            re.findall(
+                r"\b[a-zA-Z]+\b",
+                prev_text.lower(),
+            )
+        )
+
+        curr_words = set(
+            re.findall(
+                r"\b[a-zA-Z]+\b",
+                curr_text.lower(),
+            )
+        )
+
+        # Calculate overlap
+        overlap = len(
+            prev_words.intersection(curr_words)
+        )
+        total = len(
+            prev_words.union(curr_words)
+        )
+
+        similarity = (
+            overlap / total
+            if total > 0
+            else 0
+        )
+
+        # If too little overlap, likely disconnected
+        return similarity < 0.15
+
+    def _suggest_transition(
+        self,
+        prev_text: str,
+        curr_text: str,
+    ) -> str | None:
+        """
+        Suggest a transition phrase between
+        two paragraphs.
+        """
+        curr_lower = curr_text.lower()
+
+        # Check if it's an elaboration
+        if any(
+            word in curr_lower
+            for word in [
+                "example",
+                "specific",
+                "detail",
+                "case",
+            ]
+        ):
+            return "To illustrate,"
+
+        # Check if it's a continuation
+        if any(
+            word in curr_lower
+            for word in [
+                "also",
+                "another",
+                "additional",
+                "further",
+            ]
+        ):
+            return "Additionally,"
+
+        # Check if it's a conclusion
+        if any(
+            word in curr_lower
+            for word in [
+                "result",
+                "conclusion",
+                "therefore",
+                "ultimately",
+            ]
+        ):
+            return "Consequently,"
+
+        # Check if it's a contrast
+        if any(
+            word in curr_lower
+            for word in [
+                "however",
+                "different",
+                "unlike",
+                "contrast",
+                "rather",
+            ]
+        ):
+            return "However,"
+
+        return None

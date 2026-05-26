@@ -57,10 +57,18 @@ function guard(role) {
   
   const currentRole = localStorage.getItem("nrsc_role");
   
-  // If role is specified, verify it matches
-  if (role && currentRole !== role) {
+  // If role is specified, verify it matches (case-insensitive)
+  if (role && currentRole && currentRole.toLowerCase() !== role.toLowerCase()) {
     clearAuthSession();
     location.href = "/index.html";
+    return;
+  }
+  
+  // If role is specified but currentRole is missing, redirect to login
+  if (role && !currentRole) {
+    clearAuthSession();
+    location.href = "/index.html";
+    return;
   }
 }
 

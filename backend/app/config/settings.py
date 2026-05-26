@@ -14,6 +14,11 @@ class Settings(BaseSettings):
         "NRSC Documents Knowledge Expert System"
     )
 
+    offline_storage_dir: str = "./backend/offline_storage/dspace_documents"
+
+    dspace_base_url: str = ""
+
+    dspace_timeout: int = 10
     # =========================================================
     # SECURITY
     # =========================================================

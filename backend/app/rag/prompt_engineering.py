@@ -135,6 +135,9 @@ IMPORTANT RULES:
     "Relevant information was not found in the uploaded documents."
 21. Never say "based on", "according to", "from the", or similar document references.
 22. Make responses feel like they come from a knowledgeable expert, not a lookup system.
+23. Build coherent multi-paragraph responses with natural transitions.
+24. Connect related concepts clearly without abrupt topic switches.
+25. Preserve paragraph flow and context continuity from source materials.
 """
 
     # =========================================================
@@ -456,6 +459,7 @@ FINAL ANSWER:
             r"^TECHNICAL EXPLANATION:\s*",
             r"^COMPARISON ANSWER:\s*",
             r"^STEP-BY-STEP ANSWER:\s*",
+            r"^STRUCTURED ANSWER:\s*",
             r"\[Generated.*?\]",
         ]
 
@@ -480,28 +484,53 @@ FINAL ANSWER:
             response,
         )
 
+        # Preserve paragraph breaks
         response = re.sub(
             r"\n{3,}",
             "\n\n",
             response,
         )
 
-        response = re.sub(
-            r"[ \t]+",
-            " ",
-            response,
-        )
-
-        lines = response.splitlines()
-
+        # Clean up space within lines
+        lines = response.split("\n")
         cleaned_lines = []
 
-        seen = set()
-
         for line in lines:
+            # Normalize spaces within line
+            line = re.sub(r"[ \t]+", " ", line)
+            line = line.strip()
 
+            # Only keep non-empty lines
+            if line:
+                cleaned_lines.append(line)
+
+        # Reconstruct with paragraph awareness
+        paragraphs = []
+        current_para = []
+
+        for line in cleaned_lines:
+            # If line was empty (paragraph break)
+            if not line:
+                if current_para:
+                    paragraphs.append(
+                        " ".join(current_para)
+                    )
+                    current_para = []
+            else:
+                current_para.append(line)
+
+        if current_para:
+            paragraphs.append(
+                " ".join(current_para)
+            )
+
+        # Remove duplicate paragraphs
+        seen = set()
+        deduped_paragraphs = []
+
+        for para in paragraphs:
             normalized = (
-                line.strip().lower()
+                para.strip().lower()
             )
 
             if (
@@ -509,16 +538,14 @@ FINAL ANSWER:
                 and normalized not in seen
             ):
 
-                cleaned_lines.append(
-                    line.strip()
-                )
-
+                deduped_paragraphs.append(para)
                 seen.add(normalized)
 
-        response = "\n".join(
-            cleaned_lines
+        response = "\n\n".join(
+            deduped_paragraphs
         ).strip()
 
+        # Remove incomplete sentence endings
         response = re.sub(
             r"(and|or|because|since|therefore)\s*$",
             "",
@@ -531,6 +558,8 @@ FINAL ANSWER:
             "thanks",
             "hope this helps",
             "so there you have it",
+            "let me know",
+            "feel free to",
         ]
 
         for ending in bad_endings:
@@ -547,12 +576,14 @@ FINAL ANSWER:
 
         paragraphs = response.split("\n\n")
 
-        if len(paragraphs) > 4:
+        # Cap at 5 coherent paragraphs
+        if len(paragraphs) > 5:
 
             response = "\n\n".join(
-                paragraphs[:4]
+                paragraphs[:5]
             )
 
+        # Ensure proper ending punctuation
         if (
             response
             and response[-1]
@@ -602,6 +633,83 @@ FINAL ANSWER:
             return (
                 match.group(1)
                 .strip()
+            )
+
+        return ""
+
+    # =========================================================
+    # CONTEXT SYNTHESIS SIGNALS
+    # =========================================================
+
+    @staticmethod
+    def build_context_synthesis_signal(
+        context_blocks: List[str],
+    ) -> str:
+        """Build synthesis signals for multi-source context."""
+        unique_sources = set()
+        for block in context_blocks:
+            # Extract source info from context
+            match = re.search(
+                r"DOCUMENT:\s*([^\n]+)",
+                block,
+            )
+            if match:
+                unique_sources.add(match.group(1).strip())
+
+        if len(unique_sources) <= 1:
+            return (
+                "Focus on a coherent "
+                "explanation from a single "
+                "perspective."
+            )
+
+        return (
+            "Synthesize information naturally "
+            "from multiple sources without "
+            "jarring transitions. "
+            "Connect related concepts from "
+            "different sections seamlessly."
+        )
+
+    @staticmethod
+    def build_coherence_signal(
+        context_blocks: List[str],
+    ) -> str:
+        """Build signals for answer coherence."""
+        block_count = len(context_blocks)
+
+        if block_count <= 1:
+            return "Provide a complete, focused answer."
+
+        return (
+            "Structure the answer as 2-3 "
+            "coherent paragraphs with natural "
+            "transitions. Each paragraph should "
+            "explore a distinct aspect while "
+            "maintaining overall topic focus. "
+            "Use transitional phrases to connect "
+            "ideas naturally."
+        )
+
+    @staticmethod
+    def build_continuation_signal(
+        conversation_context: str | None,
+    ) -> str:
+        """Build signals for conversation continuity."""
+        if (
+            not conversation_context
+            or len(conversation_context.split()) < 20
+        ):
+            return ""
+
+        # Detect if this is a follow-up
+        if "\n\nUser:" in conversation_context:
+            return (
+                "This is a follow-up question. "
+                "Build on the previous context "
+                "and avoid repeating information "
+                "already covered. Reference prior "
+                "concepts only when clarifying."
             )
 
         return ""

@@ -201,6 +201,16 @@ document.querySelector("#askForm")?.addEventListener("submit", async event => {
 // Conversations
 // ============================================================
 
+function closeAllConversationMenus() {
+  document.querySelectorAll(".conversation-dropdown").forEach(menu => {
+    menu.hidden = true;
+  });
+
+  document.querySelectorAll(".conversation-row").forEach(row => {
+    row.classList.remove("menu-open");
+  });
+}
+
 async function deleteConversation(conversationId) {
 
   if (!confirm("Delete this conversation?")) {
@@ -216,6 +226,7 @@ async function deleteConversation(conversationId) {
       }
     );
 
+    chatHistoryManager.removeConversationTitle(conversationId);
     toast("Conversation deleted");
 
     if (
@@ -225,10 +236,42 @@ async function deleteConversation(conversationId) {
     }
 
     await chatHistoryManager.refreshConversations();
+    closeAllConversationMenus();
 
   } catch (error) {
     toast(error.message);
   }
+}
+
+function renameConversation(conversationId) {
+  const currentTitle =
+    chatHistoryManager.getConversationTitle(conversationId);
+
+  const newTitle = prompt(
+    "Rename conversation",
+    currentTitle
+  );
+
+  if (newTitle === null) {
+    return;
+  }
+
+  const trimmed = newTitle.trim();
+
+  if (!trimmed) {
+    toast("Title cannot be empty");
+    return;
+  }
+
+  chatHistoryManager.setConversationTitle(
+    conversationId,
+    trimmed
+  );
+
+  chatHistoryManager.renderConversationList();
+  chatHistoryManager.updateChatHeader();
+  closeAllConversationMenus();
+  toast("Conversation renamed");
 }
 
 document.querySelector("#newChatBtn")?.addEventListener("click", () => {
@@ -271,6 +314,37 @@ document.querySelector("#clearHistoryBtn")
 document.querySelector("#conversationList")
 ?.addEventListener("click", event => {
 
+  const menuToggle =
+    event.target.closest("[data-menu-toggle]");
+
+  if (menuToggle) {
+    event.stopPropagation();
+
+    const row = menuToggle.closest(".conversation-row");
+    const menu = row?.querySelector(".conversation-dropdown");
+    const willOpen = menu?.hidden !== false;
+
+    closeAllConversationMenus();
+
+    if (willOpen && menu && row) {
+      menu.hidden = false;
+      row.classList.add("menu-open");
+    }
+
+    return;
+  }
+
+  const renameBtn =
+    event.target.closest("[data-rename-conversation]");
+
+  if (renameBtn) {
+    event.stopPropagation();
+    renameConversation(
+      renameBtn.dataset.renameConversation
+    );
+    return;
+  }
+
   const deleteBtn =
     event.target.closest("[data-delete-conversation]");
 
@@ -289,9 +363,17 @@ document.querySelector("#conversationList")
 
   if (!item) return;
 
+  closeAllConversationMenus();
+
   chatHistoryManager.openConversation(
     item.dataset.conversationId
   );
+});
+
+document.addEventListener("click", event => {
+  if (!event.target.closest("#conversationList")) {
+    closeAllConversationMenus();
+  }
 });
 
 // ============================================================

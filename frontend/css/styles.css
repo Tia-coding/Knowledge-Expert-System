@@ -1337,17 +1337,17 @@ tr:hover {
 }
 
 .chatgpt-body .conversation-item,
-.chatgpt-body .conversation-delete,
+.chatgpt-body .conversation-menu-btn,
 .chatgpt-body .new-chat-btn,
 .chatgpt-body .sidebar-btn {
     padding: 0;
 }
 
 .chatgpt-body .conversation-item {
-    padding: 11px 12px;
+    padding: 10px 36px 10px 12px;
 }
 
-.chatgpt-body .conversation-delete {
+.chatgpt-body .conversation-menu-btn {
     padding: 0;
 }
 
@@ -1475,94 +1475,136 @@ tr:hover {
 }
 
 .conversation-row {
-    display: flex;
-    align-items: stretch;
-    gap: 8px;
+    position: relative;
     width: 100%;
+    border-radius: 10px;
+}
+
+.conversation-row:hover,
+.conversation-row.menu-open {
+    background: #f3f7fc;
+}
+
+.conversation-row.active {
+    background: #eef4fb;
 }
 
 .conversation-item {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 3px;
+    width: 100%;
+    display: block;
     min-width: 0;
-    padding: 11px 12px;
-    border: 1px solid #d8e2ee;
+    padding: 10px 36px 10px 12px;
+    border: none;
     border-radius: 10px;
-    background: #ffffff;
+    background: transparent;
     color: #10203b;
     text-align: left;
     box-shadow: none;
-    transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    transition: background 0.15s ease;
 }
 
 .conversation-item:hover {
-    border-color: #bfd0e5;
-    background: #f8fbff;
-    transform: translateY(-1px);
+    background: transparent;
+    transform: none;
 }
 
 .conversation-item.active {
-    border-color: #9db9da;
-    background: #eef4fb;
+    background: transparent;
     box-shadow: inset 3px 0 0 var(--blue);
 }
 
 .conversation-item:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(0, 59, 112, 0.14);
+    box-shadow: inset 3px 0 0 var(--blue), 0 0 0 2px rgba(0, 59, 112, 0.12);
 }
 
 .conversation-title {
+    display: block;
     width: 100%;
-    font-size: 13px;
-    font-weight: 700;
+    font-size: 14px;
+    font-weight: 600;
     color: #0f2f54;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.conversation-meta {
-    width: 100%;
-    font-size: 11px;
-    color: #5e728b;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.conversation-menu-wrap {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    z-index: 2;
 }
 
-.conversation-delete {
-    width: 34px;
-    min-width: 34px;
-    height: 34px;
-    align-self: center;
-    border: 1px solid #d9e3ef;
+.conversation-menu-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
     border-radius: 8px;
-    background: #f7fafd;
-    color: #4c617d;
-    font-size: 18px;
-    font-weight: 600;
+    background: transparent;
+    color: #526681;
+    font-size: 16px;
     line-height: 1;
-    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
-.conversation-delete:hover {
-    background: #edf3fb;
+.conversation-row:hover .conversation-menu-btn,
+.conversation-row.menu-open .conversation-menu-btn,
+.conversation-menu-btn:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.conversation-menu-btn:hover {
+    background: #e3ebf5;
     color: #16365b;
-    border-color: #c4d6ea;
-    transform: translateY(-1px);
 }
 
-.conversation-delete:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(0, 59, 112, 0.14);
+.conversation-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 140px;
+    padding: 6px;
+    border: 1px solid #d5e1ef;
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.conversation-dropdown-item {
+    width: 100%;
+    display: block;
+    padding: 9px 12px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #10203b;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.conversation-dropdown-item:hover {
+    background: #f3f7fc;
+    transform: none;
+}
+
+.conversation-dropdown-item.danger {
+    color: #c41e2a;
+}
+
+.conversation-dropdown-item.danger:hover {
+    background: #fff1f2;
 }
 
 .empty-text {
@@ -2013,7 +2055,7 @@ tr:hover {
 }
 
 .chatgpt-body .conversation-item:hover,
-.chatgpt-body .conversation-delete:hover,
+.chatgpt-body .conversation-menu-btn:hover,
 .chatgpt-body .new-chat-btn:hover,
 .chatgpt-body .sidebar-btn:hover,
 .chatgpt-body .composer-box .send-btn:hover:not(:disabled),

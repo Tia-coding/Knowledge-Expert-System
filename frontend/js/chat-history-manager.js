@@ -9,6 +9,48 @@ class ChatHistoryManager {
     this.messages = [];
     this.searchQuery = "";
     this.activeStorageKey = "nrsc_active_conversation_id";
+    this.titleStorageKey = "nrsc_conversation_titles";
+  }
+
+  getCustomTitles() {
+    try {
+      return JSON.parse(
+        localStorage.getItem(this.titleStorageKey) || "{}"
+      );
+    } catch {
+      return {};
+    }
+  }
+
+  getConversationTitle(conversationId) {
+    const custom = this.getCustomTitles()[conversationId];
+    if (custom) {
+      return custom;
+    }
+
+    const thread = this.conversations.find(
+      c => c.conversation_id === conversationId
+    );
+
+    return thread?.title || "New conversation";
+  }
+
+  setConversationTitle(conversationId, title) {
+    const titles = this.getCustomTitles();
+    titles[conversationId] = title;
+    localStorage.setItem(
+      this.titleStorageKey,
+      JSON.stringify(titles)
+    );
+  }
+
+  removeConversationTitle(conversationId) {
+    const titles = this.getCustomTitles();
+    delete titles[conversationId];
+    localStorage.setItem(
+      this.titleStorageKey,
+      JSON.stringify(titles)
+    );
   }
 
   async init() {
@@ -67,7 +109,9 @@ class ChatHistoryManager {
     }
 
     return this.conversations.filter(thread =>
-      (thread.title || "").toLowerCase().includes(this.searchQuery)
+      this.getConversationTitle(thread.conversation_id)
+        .toLowerCase()
+        .includes(this.searchQuery)
     );
   }
 
@@ -136,10 +180,11 @@ class ChatHistoryManager {
     );
 
     if (thread) {
-      titleEl.textContent = thread.title || "Conversation";
+      titleEl.textContent = this.getConversationTitle(
+        thread.conversation_id
+      );
       if (metaEl) {
-        const count = thread.message_count || this.messages.length;
-        metaEl.textContent = `${count} message${count === 1 ? "" : "s"} in this thread`;
+        metaEl.textContent = "NRSC Knowledge Assistant";
       }
       return;
     }
@@ -210,37 +255,52 @@ class ChatHistoryManager {
       const isActive =
         thread.conversation_id === this.currentConversationId;
 
-      const title = escapeHtml(thread.title || "New conversation");
-      const when = thread.updated_at
-        ? new Date(thread.updated_at).toLocaleString("en-IN", {
-            dateStyle: "medium",
-            timeStyle: "short",
-          })
-        : "";
+      const conversationId = escapeHtml(thread.conversation_id);
+      const title = escapeHtml(
+        this.getConversationTitle(thread.conversation_id)
+      );
 
       return `
-        <div class="conversation-row">
+        <div class="conversation-row${isActive ? " active" : ""}">
           <button
             type="button"
             class="conversation-item${isActive ? " active" : ""}"
-            data-conversation-id="${escapeHtml(thread.conversation_id)}"
+            data-conversation-id="${conversationId}"
             title="${title}"
           >
             <span class="conversation-title">${title}</span>
-            <span class="conversation-meta">
-              ${thread.message_count || 0} msgs
-              ${when ? " · " + escapeHtml(when) : ""}
-            </span>
           </button>
-          <button
-            type="button"
-            class="conversation-delete"
-            data-delete-conversation="${escapeHtml(thread.conversation_id)}"
-            title="Delete conversation"
-            aria-label="Delete conversation"
-          >
-            &times;
-          </button>
+          <div class="conversation-menu-wrap">
+            <button
+              type="button"
+              class="conversation-menu-btn"
+              data-menu-toggle="${conversationId}"
+              aria-label="Conversation options"
+              aria-haspopup="true"
+            >
+              ⋮
+            </button>
+            <div
+              class="conversation-dropdown"
+              data-menu="${conversationId}"
+              hidden
+            >
+              <button
+                type="button"
+                class="conversation-dropdown-item"
+                data-rename-conversation="${conversationId}"
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                class="conversation-dropdown-item danger"
+                data-delete-conversation="${conversationId}"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       `;
     }).join("");

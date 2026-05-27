@@ -8,6 +8,21 @@ from app.routes import auth, documents, rag, system
 from app.utils.logging import configure_logging
 
 
+import logging
+
+logging.getLogger(
+    "chromadb.segment.impl.vector.local_persistent_hnsw"
+).setLevel(logging.ERROR)
+
+logging.getLogger(
+    "chromadb.segment.impl.metadata.sqlite"
+).setLevel(logging.ERROR)
+
+logging.getLogger(
+    "chromadb.telemetry.product.posthog"
+).setLevel(logging.ERROR)
+
+
 # Initialize settings and logging
 settings = get_settings()
 configure_logging()

@@ -45,23 +45,46 @@ const ADMIN_SECTIONS = [
 let scrollSpyObserver = null;
 
 function setActiveNav(sectionId) {
-  document.querySelectorAll(".nav-item[data-section]").forEach(nav => {
-    nav.classList.toggle("active", nav.dataset.section === sectionId);
-  });
+
+  document
+    .querySelectorAll(".nav-item[data-section]")
+    .forEach(nav => {
+
+      nav.classList.toggle(
+        "active",
+        nav.dataset.section === sectionId
+      );
+
+    });
+
 }
 
 function refreshSectionData(sectionId) {
+
   if (sectionId === "manage") {
-    loadDocuments().catch(e => console.error(e));
+
+    loadDocuments()
+      .catch(e => console.error(e));
+
   } else if (sectionId === "logs") {
-    loadLogs().catch(e => console.error(e));
+
+    loadLogs()
+      .catch(e => console.error(e));
+
   } else if (sectionId === "dashboard") {
-    loadMetrics().catch(e => console.error(e));
+
+    loadMetrics()
+      .catch(e => console.error(e));
+
   }
+
 }
 
 function scrollToSection(sectionId) {
-  const target = document.getElementById(sectionId);
+
+  const target =
+    document.getElementById(sectionId);
+
   if (!target) {
     return;
   }
@@ -72,10 +95,13 @@ function scrollToSection(sectionId) {
   });
 
   setActiveNav(sectionId);
+
   refreshSectionData(sectionId);
+
 }
 
 function initScrollSpy() {
+
   const sections = ADMIN_SECTIONS
     .map(id => document.getElementById(id))
     .filter(Boolean);
@@ -92,56 +118,95 @@ function initScrollSpy() {
     ADMIN_SECTIONS.map(id => [id, 0])
   );
 
-  scrollSpyObserver = new IntersectionObserver(
-    entries => {
-      entries.forEach(entry => {
-        visibility.set(
-          entry.target.id,
-          entry.isIntersecting ? entry.intersectionRatio : 0
-        );
-      });
+  scrollSpyObserver =
+    new IntersectionObserver(
 
-      let activeId = ADMIN_SECTIONS[0];
-      let bestRatio = -1;
+      entries => {
 
-      ADMIN_SECTIONS.forEach(id => {
-        const ratio = visibility.get(id) || 0;
-        if (ratio > bestRatio) {
-          bestRatio = ratio;
-          activeId = id;
+        entries.forEach(entry => {
+
+          visibility.set(
+            entry.target.id,
+            entry.isIntersecting
+              ? entry.intersectionRatio
+              : 0
+          );
+
+        });
+
+        let activeId =
+          ADMIN_SECTIONS[0];
+
+        let bestRatio = -1;
+
+        ADMIN_SECTIONS.forEach(id => {
+
+          const ratio =
+            visibility.get(id) || 0;
+
+          if (ratio > bestRatio) {
+
+            bestRatio = ratio;
+            activeId = id;
+
+          }
+
+        });
+
+        if (bestRatio > 0) {
+          setActiveNav(activeId);
         }
-      });
 
-      if (bestRatio > 0) {
-        setActiveNav(activeId);
+      },
+
+      {
+        root: null,
+        rootMargin: "-12% 0px -55% 0px",
+        threshold: [0, 0.15, 0.35, 0.55, 0.75, 1],
       }
-    },
-    {
-      root: null,
-      rootMargin: "-12% 0px -55% 0px",
-      threshold: [0, 0.15, 0.35, 0.55, 0.75, 1],
-    }
-  );
+
+    );
 
   sections.forEach(section => {
     scrollSpyObserver.observe(section);
   });
+
 }
 
-document.addEventListener("click", (event) => {
-  const navItem = event.target.closest(".nav-item[data-section]");
-  const logoutItem = event.target.closest("[data-logout]");
+document.addEventListener(
+  "click",
+  event => {
 
-  if (navItem) {
-    event.preventDefault();
-    scrollToSection(navItem.dataset.section);
-  }
+    const navItem =
+      event.target.closest(
+        ".nav-item[data-section]"
+      );
 
-  if (logoutItem) {
-    event.preventDefault();
-    logout();
+    const logoutItem =
+      event.target.closest(
+        "[data-logout]"
+      );
+
+    if (navItem) {
+
+      event.preventDefault();
+
+      scrollToSection(
+        navItem.dataset.section
+      );
+
+    }
+
+    if (logoutItem) {
+
+      event.preventDefault();
+
+      logout();
+
+    }
+
   }
-});
+);
 
 /* =========================================================
    HELPERS
@@ -150,15 +215,10 @@ document.addEventListener("click", (event) => {
 function escapeHtml(value) {
 
   return String(value || "")
-
     .replaceAll("&", "&amp;")
-
     .replaceAll("<", "&lt;")
-
     .replaceAll(">", "&gt;")
-
     .replaceAll('"', "&quot;")
-
     .replaceAll("'", "&#039;");
 
 }
@@ -170,9 +230,7 @@ function formatSize(bytes) {
   }
 
   return bytes < 1024 * 1024
-
     ? `${(bytes / 1024).toFixed(2)} KB`
-
     : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 
 }
@@ -188,11 +246,8 @@ function formatDate(dateString) {
     return new Date(
       dateString
     ).toLocaleString("en-IN", {
-
       dateStyle: "medium",
-
-      timeStyle: "short"
-
+      timeStyle: "short",
     });
 
   } catch {
@@ -258,35 +313,124 @@ function indexingStatus(status) {
 ========================================================= */
 
 function resetFileInput() {
+
   if (fileInput) {
     fileInput.value = "";
   }
+
 }
 
 function fileSelectionKey(file) {
-  return `${file.name}|${file.size}|${file.lastModified}`;
+
+  return `
+    ${file.name}|
+    ${file.size}|
+    ${file.lastModified}
+  `;
+
 }
 
-function mergeSelectedFiles(existing, incoming) {
-  const seen = new Set(existing.map(fileSelectionKey));
+function mergeSelectedFiles(
+  existing,
+  incoming
+) {
+
+  const seen = new Set(
+    existing.map(fileSelectionKey)
+  );
+
   const merged = [...existing];
 
   incoming.forEach(file => {
-    const key = fileSelectionKey(file);
+
+    const key =
+      fileSelectionKey(file);
+
     if (!seen.has(key)) {
+
       seen.add(key);
+
       merged.push(file);
+
     }
+
   });
 
   return merged;
+
 }
+
+/* =========================================================
+   DRAG & DROP
+========================================================= */
 
 if (uploadZone && fileInput) {
 
   uploadZone.addEventListener(
     "click",
     () => fileInput.click()
+  );
+
+  ["dragenter", "dragover"]
+    .forEach(eventName => {
+
+      uploadZone.addEventListener(
+        eventName,
+        event => {
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          uploadZone.classList.add(
+            "drag-active"
+          );
+
+        }
+      );
+
+    });
+
+  ["dragleave", "drop"]
+    .forEach(eventName => {
+
+      uploadZone.addEventListener(
+        eventName,
+        event => {
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          uploadZone.classList.remove(
+            "drag-active"
+          );
+
+        }
+      );
+
+    });
+
+  uploadZone.addEventListener(
+    "drop",
+    event => {
+
+      const droppedFiles =
+        Array.from(
+          event.dataTransfer.files || []
+        );
+
+      if (!droppedFiles.length) {
+        return;
+      }
+
+      state.selectedFiles =
+        mergeSelectedFiles(
+          state.selectedFiles,
+          droppedFiles
+        );
+
+      renderSelectedFiles();
+
+    }
   );
 
 }
@@ -297,16 +441,23 @@ if (fileInput) {
     "change",
     event => {
 
-      const picked = Array.from(event.target.files || []);
+      const picked =
+        Array.from(
+          event.target.files || []
+        );
 
       if (picked.length) {
-        state.selectedFiles = mergeSelectedFiles(
-          state.selectedFiles,
-          picked
-        );
+
+        state.selectedFiles =
+          mergeSelectedFiles(
+            state.selectedFiles,
+            picked
+          );
+
       }
 
       resetFileInput();
+
       renderSelectedFiles();
 
     }
@@ -336,24 +487,20 @@ function renderSelectedFiles() {
 
     <div class="selected-files-container">
 
-      ${state.selectedFiles.map((file, index) => `
+      ${state.selectedFiles.map(
+        (file, index) => `
 
         <div class="selected-file-card">
 
           <button
             type="button"
             class="remove-selected-file"
-            data-index="${index}"
-          >
-            &times;
+            data-index="${index}">
+            ×
           </button>
 
-          <div class="selected-file-top">
-
-            <div class="selected-file-badge">
-              ${getFileType(file.name)}
-            </div>
-
+          <div class="selected-file-badge">
+            ${getFileType(file.name)}
           </div>
 
           <div class="selected-file-name">
@@ -366,32 +513,35 @@ function renderSelectedFiles() {
 
         </div>
 
-      `).join("")}
+      `
+      ).join("")}
 
     </div>
 
   `;
 
-  document.querySelectorAll(
-    ".remove-selected-file"
-  ).forEach(button => {
+  document
+    .querySelectorAll(
+      ".remove-selected-file"
+    )
+    .forEach(button => {
 
-    button.addEventListener(
-      "click",
-      event => {
+      button.addEventListener(
+        "click",
+        event => {
 
-        event.preventDefault();
+          event.preventDefault();
 
-        event.stopPropagation();
+          event.stopPropagation();
 
-        removeSelectedFile(
-          Number(button.dataset.index)
-        );
+          removeSelectedFile(
+            Number(button.dataset.index)
+          );
 
-      }
-    );
+        }
+      );
 
-  });
+    });
 
 }
 
@@ -403,6 +553,7 @@ function removeSelectedFile(index) {
   );
 
   resetFileInput();
+
   renderSelectedFiles();
 
 }
@@ -410,7 +561,9 @@ function removeSelectedFile(index) {
 function clearSelectedFiles() {
 
   state.selectedFiles = [];
+
   resetFileInput();
+
   renderSelectedFiles();
 
 }
@@ -476,31 +629,112 @@ if (uploadBtn) {
 
         });
 
-        const response = await fetch(
-          "/api/upload",
-          {
-            method: "POST",
-            headers: authHeaders(),
-            body: formData,
-          }
+        uploadProgress.style.width = "0%";
+
+        const xhr =
+          new XMLHttpRequest();
+
+        xhr.open(
+          "POST",
+          "/api/upload"
         );
 
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ detail: "Upload failed" }));
-          throw new Error(error.detail || "Upload failed");
-        }
+        const headers =
+          authHeaders();
 
-        toast("Documents uploaded successfully");
+        Object.keys(headers)
+          .forEach(key => {
 
-        clearSelectedFiles();
+            xhr.setRequestHeader(
+              key,
+              headers[key]
+            );
 
-        await loadDocuments().catch(e => console.error(e));
+          });
 
-        await loadMetrics().catch(e => console.error(e));
+        xhr.upload.onprogress =
+          event => {
+
+            if (
+              event.lengthComputable
+            ) {
+
+              const percent =
+                (event.loaded /
+                  event.total) * 100;
+
+              uploadProgress.style.width =
+                `${percent}%`;
+
+            }
+
+          };
+
+        xhr.onload =
+          async () => {
+
+            if (
+              xhr.status >= 200 &&
+              xhr.status < 300
+            ) {
+
+              uploadProgress.style.width =
+                "100%";
+
+              toast(
+                "Documents uploaded successfully"
+              );
+
+              clearSelectedFiles();
+
+              await loadDocuments()
+                .catch(
+                  e => console.error(e)
+                );
+
+              await loadMetrics()
+                .catch(
+                  e => console.error(e)
+                );
+
+              setTimeout(() => {
+
+                uploadProgress.style.width =
+                  "0%";
+
+              }, 1200);
+
+            } else {
+
+              uploadProgress.style.width =
+                "0%";
+
+              toast("Upload failed");
+
+            }
+
+          };
+
+        xhr.onerror = () => {
+
+          uploadProgress.style.width =
+            "0%";
+
+          toast("Upload failed");
+
+        };
+
+        xhr.send(formData);
 
       } catch (error) {
+
         console.error(error);
-        toast(error.message || "Upload failed");
+
+        toast(
+          error.message ||
+          "Upload failed"
+        );
+
       }
 
     }
@@ -513,15 +747,34 @@ if (uploadBtn) {
 ========================================================= */
 
 async function loadDocuments() {
+
   try {
-    const docs = await api("/documents");
-    state.documents = Array.isArray(docs) ? docs : [];
-    renderDocuments(state.documents);
+
+    const docs =
+      await api("/documents");
+
+    state.documents =
+      Array.isArray(docs)
+        ? docs
+        : [];
+
+    renderDocuments(
+      state.documents
+    );
+
   } catch (error) {
-    console.error("Failed to load documents data:", error);
+
+    console.error(
+      "Failed to load documents:",
+      error
+    );
+
     state.documents = [];
+
     renderDocuments([]);
+
   }
+
 }
 
 function renderDocuments(rows) {
@@ -536,8 +789,19 @@ function renderDocuments(rows) {
   }
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;" class="muted">No documents found.</td></tr>`;
+
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9"
+            style="text-align:center;"
+            class="muted">
+          No documents found.
+        </td>
+      </tr>
+    `;
+
     return;
+
   }
 
   tbody.innerHTML = rows.map(doc => `
@@ -566,8 +830,7 @@ function renderDocuments(rows) {
             type="button"
             class="btn-primary"
             data-action="open"
-            data-id="${doc.id}"
-          >
+            data-id="${doc.id}">
             Open
           </button>
 
@@ -575,8 +838,7 @@ function renderDocuments(rows) {
             type="button"
             class="btn-light"
             data-action="download"
-            data-id="${doc.id}"
-          >
+            data-id="${doc.id}">
             Download
           </button>
 
@@ -584,8 +846,7 @@ function renderDocuments(rows) {
             type="button"
             class="btn-danger"
             data-action="delete"
-            data-id="${doc.id}"
-          >
+            data-id="${doc.id}">
             Delete
           </button>
 
@@ -599,150 +860,321 @@ function renderDocuments(rows) {
 
 }
 
+
 /* =========================================================
-   DOCUMENT ACTIONS (delegated — avoids broken inline handlers)
+   DOCUMENT ACTIONS
 ========================================================= */
 
 function parseFilenameFromDisposition(disposition) {
+
   if (!disposition) {
     return null;
   }
 
-  const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const utfMatch =
+    disposition.match(
+      /filename\*=UTF-8''([^;]+)/i
+    );
+
   if (utfMatch?.[1]) {
+
     try {
-      return decodeURIComponent(utfMatch[1].trim());
+
+      return decodeURIComponent(
+        utfMatch[1].trim()
+      );
+
     } catch {
+
       return utfMatch[1].trim();
+
     }
+
   }
 
-  const quotedMatch = disposition.match(/filename="([^"]+)"/i);
+  const quotedMatch =
+    disposition.match(
+      /filename="([^"]+)"/i
+    );
+
   if (quotedMatch?.[1]) {
     return quotedMatch[1];
   }
 
-  const plainMatch = disposition.match(/filename=([^;]+)/i);
+  const plainMatch =
+    disposition.match(
+      /filename=([^;]+)/i
+    );
+
   if (plainMatch?.[1]) {
     return plainMatch[1].trim();
   }
 
   return null;
+
 }
 
-async function fetchDocumentBlob(id, download = false) {
+async function fetchDocumentBlob(
+  id,
+  download = false
+) {
+
   const url = download
     ? `/api/download/${id}?download=true`
     : `/api/download/${id}`;
 
-  const response = await fetch(url, { headers: authHeaders() });
+  const response = await fetch(
+    url,
+    {
+      headers: authHeaders()
+    }
+  );
 
-  if (response.status === 401 || response.status === 403) {
+  if (
+    response.status === 401 ||
+    response.status === 403
+  ) {
+
     clearAuthSession();
-    location.href = "/index.html";
+
+    location.href =
+      "/index.html";
+
     return null;
+
   }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(error.detail || "Request failed");
+
+    const error =
+      await response
+        .json()
+        .catch(() => ({
+          detail:
+            "Request failed"
+        }));
+
+    throw new Error(
+      error.detail ||
+      "Request failed"
+    );
+
   }
 
-  const blob = await response.blob();
+  const blob =
+    await response.blob();
+
   const filename =
     parseFilenameFromDisposition(
-      response.headers.get("Content-Disposition")
+      response.headers.get(
+        "Content-Disposition"
+      )
     ) || "document";
 
-  return { blob, filename };
+  return {
+    blob,
+    filename
+  };
+
 }
 
 async function openDoc(id) {
+
   try {
-    const result = await fetchDocumentBlob(id, false);
+
+    const result =
+      await fetchDocumentBlob(
+        id,
+        false
+      );
+
     if (!result) {
       return;
     }
 
-    const blobUrl = URL.createObjectURL(result.blob);
-    const link = document.createElement("a");
-    link.href = blobUrl;
-    link.target = "_blank";
-    link.rel = "noopener";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    const blobUrl =
+      URL.createObjectURL(
+        result.blob
+      );
+
+    window.open(
+      blobUrl,
+      "_blank"
+    );
+
+    setTimeout(() => {
+
+      URL.revokeObjectURL(
+        blobUrl
+      );
+
+    }, 60000);
+
   } catch (e) {
+
     console.error(e);
-    toast(e.message || "Could not open document");
+
+    toast(
+      e.message ||
+      "Could not open document"
+    );
+
   }
+
 }
 
 async function downloadDoc(id) {
+
   try {
-    const doc = state.documents.find(d => d.id === id);
-    const result = await fetchDocumentBlob(id, true);
+
+    const doc =
+      state.documents.find(
+        d => d.id === id
+      );
+
+    const result =
+      await fetchDocumentBlob(
+        id,
+        true
+      );
+
     if (!result) {
       return;
     }
 
-    const filename = result.filename || doc?.filename || "document";
-    const blobUrl = URL.createObjectURL(result.blob);
-    const link = document.createElement("a");
+    const filename =
+      result.filename ||
+      doc?.filename ||
+      "document";
+
+    const blobUrl =
+      URL.createObjectURL(
+        result.blob
+      );
+
+    const link =
+      document.createElement("a");
+
     link.href = blobUrl;
-    link.download = filename;
-    document.body.appendChild(link);
+
+    link.download =
+      filename;
+
+    document.body.appendChild(
+      link
+    );
+
     link.click();
+
     link.remove();
-    URL.revokeObjectURL(blobUrl);
-    toast("Download started");
+
+    URL.revokeObjectURL(
+      blobUrl
+    );
+
+    toast(
+      "Download started"
+    );
+
   } catch (e) {
+
     console.error(e);
-    toast(e.message || "Download failed");
+
+    toast(
+      e.message ||
+      "Download failed"
+    );
+
   }
+
 }
 
 async function deleteDoc(id) {
-  const confirmed = confirm("Delete this document?");
+
+  const confirmed =
+    confirm(
+      "Delete this document?"
+    );
+
   if (!confirmed) {
     return;
   }
 
   try {
-    await api(`/documents/${id}`, { method: "DELETE" });
-    toast("Document deleted");
-    await loadDocuments().catch(() => {});
-    await loadMetrics().catch(() => {});
+
+    await api(
+      `/documents/${id}`,
+      {
+        method: "DELETE"
+      }
+    );
+
+    toast(
+      "Document deleted"
+    );
+
+    await loadDocuments();
+
+    await loadMetrics();
+
   } catch (e) {
+
     console.error(e);
-    toast(e.message || "Failed to delete document");
+
+    toast(
+      e.message ||
+      "Failed to delete document"
+    );
+
   }
+
 }
 
-document.addEventListener("click", (event) => {
-  const button = event.target.closest("#documentsTable [data-action]");
-  if (!button) {
-    return;
+document.addEventListener(
+  "click",
+  event => {
+
+    const button =
+      event.target.closest(
+        "#documentsTable [data-action]"
+      );
+
+    if (!button) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const id =
+      Number(button.dataset.id);
+
+    const action =
+      button.dataset.action;
+
+    if (!id) {
+      return;
+    }
+
+    if (action === "open") {
+
+      openDoc(id);
+
+    } else if (
+      action === "download"
+    ) {
+
+      downloadDoc(id);
+
+    } else if (
+      action === "delete"
+    ) {
+
+      deleteDoc(id);
+
+    }
+
   }
-
-  event.preventDefault();
-
-  const id = Number(button.dataset.id);
-  const action = button.dataset.action;
-
-  if (!id) {
-    return;
-  }
-
-  if (action === "open") {
-    openDoc(id);
-  } else if (action === "download") {
-    downloadDoc(id);
-  } else if (action === "delete") {
-    deleteDoc(id);
-  }
-});
+);
 
 /* =========================================================
    SEARCH
@@ -766,9 +1198,7 @@ if (fileSearch) {
               .includes(value)
         );
 
-      renderDocuments(
-        filtered
-      );
+      renderDocuments(filtered);
 
     }
   );
@@ -780,16 +1210,37 @@ if (fileSearch) {
 ========================================================= */
 
 async function loadMetrics() {
-  const targetMetric = document.querySelector("#totalDocuments");
-  if (!targetMetric) return;
+
+  const targetMetric =
+    document.querySelector(
+      "#totalDocuments"
+    );
+
+  if (!targetMetric) {
+    return;
+  }
 
   try {
-    const metrics = await api("/metrics");
-    targetMetric.textContent = metrics.total_documents !== undefined ? metrics.total_documents : 0;
+
+    const metrics =
+      await api("/metrics");
+
+    targetMetric.textContent =
+      metrics.total_documents !== undefined
+        ? metrics.total_documents
+        : 0;
+
   } catch (error) {
-    console.error("Failed to load backend metrics counters:", error);
+
+    console.error(
+      "Failed to load metrics:",
+      error
+    );
+
     targetMetric.textContent = "0";
+
   }
+
 }
 
 /* =========================================================
@@ -797,30 +1248,78 @@ async function loadMetrics() {
 ========================================================= */
 
 async function loadLogs() {
-  const tbody = document.querySelector("#logsTable tbody");
-  if (!tbody) return;
+
+  const tbody =
+    document.querySelector(
+      "#logsTable tbody"
+    );
+
+  if (!tbody) {
+    return;
+  }
 
   try {
-    const logs = await api("/security-logs");
-    const logArray = Array.isArray(logs) ? logs : [];
 
-    if (logArray.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;" class="muted">No security logs logged.</td></tr>`;
+    const logs =
+      await api(
+        "/security-logs"
+      );
+
+    const logArray =
+      Array.isArray(logs)
+        ? logs
+        : [];
+
+    if (!logArray.length) {
+
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="4"
+              style="text-align:center;"
+              class="muted">
+            No security logs found.
+          </td>
+        </tr>
+      `;
+
       return;
+
     }
 
-    tbody.innerHTML = logArray.map(log => `
+    tbody.innerHTML =
+      logArray.map(log => `
+
       <tr>
-        <td>${escapeHtml(log.action)}</td>
-        <td>${escapeHtml(log.username)}</td>
-        <td>${escapeHtml(log.ip_address)}</td>
-        <td>${formatDate(log.created_at)}</td>
+
+        <td>
+          ${escapeHtml(log.action)}
+        </td>
+
+        <td>
+          ${escapeHtml(log.username)}
+        </td>
+
+        <td>
+          ${escapeHtml(log.ip_address)}
+        </td>
+
+        <td>
+          ${formatDate(log.created_at)}
+        </td>
+
       </tr>
+
     `).join("");
+
   } catch (error) {
-    console.error("Failed to load security logs:", error);
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;" class="status danger-text">Error loading logs.</td></tr>`;
+
+    console.error(
+      "Failed to load logs:",
+      error
+    );
+
   }
+
 }
 
 /* =========================================================
@@ -828,28 +1327,68 @@ async function loadLogs() {
 ========================================================= */
 
 if (clearLogsBtn) {
-  clearLogsBtn.addEventListener("click", async () => {
-    if (!confirm("Clear all security logs?")) {
-      return;
-    }
 
-    try {
-      await api("/security-logs", { method: "DELETE" });
-      toast("Security logs cleared");
-      await loadLogs();
-    } catch (error) {
-      console.error(error);
-      toast(error.message || "Failed to clear logs");
+  clearLogsBtn.addEventListener(
+    "click",
+    async () => {
+
+      if (
+        !confirm(
+          "Clear all security logs?"
+        )
+      ) {
+        return;
+      }
+
+      try {
+
+        await api(
+          "/security-logs",
+          {
+            method: "DELETE"
+          }
+        );
+
+        toast(
+          "Security logs cleared"
+        );
+
+        await loadLogs();
+
+      } catch (error) {
+
+        console.error(error);
+
+        toast(
+          error.message ||
+          "Failed to clear logs"
+        );
+
+      }
+
     }
-  });
+  );
+
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  renderSelectedFiles();
-  initScrollSpy();
-  setActiveNav("dashboard");
+window.addEventListener(
+  "DOMContentLoaded",
+  () => {
 
-  loadMetrics().catch(e => console.error("Initial metrics fetch failed:", e));
-  loadDocuments().catch(e => console.error("Initial documents fetch failed:", e));
-  loadLogs().catch(e => console.error("Initial security logs fetch failed:", e));
-});
+    renderSelectedFiles();
+
+    initScrollSpy();
+
+    setActiveNav("dashboard");
+
+    loadMetrics()
+      .catch(e => console.error(e));
+
+    loadDocuments()
+      .catch(e => console.error(e));
+
+    loadLogs()
+      .catch(e => console.error(e));
+
+  }
+);

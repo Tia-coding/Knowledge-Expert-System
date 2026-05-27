@@ -41,7 +41,7 @@ function validateLoginForm() {
     return false;
   }
 
-  if (role !== "administrator" && role !== "user") {
+  if (role !== "admin" && role !== "user") {
     toast("Please select a valid role");
     roleSelect.focus();
     return false;
@@ -63,7 +63,7 @@ loginForm.addEventListener("submit", async event => {
 
   const username = usernameInput.value.trim();
   const password = passwordInput.value.trim();
-  const requestedRole = roleSelect.value.toLowerCase() === "administrator" ? "admin" : "user";
+  const requestedRole = roleSelect.value.toLowerCase();
 
   const button = event.submitter;
   button.disabled = true;

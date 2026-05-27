@@ -15,9 +15,15 @@ from app.rag.coherence_analyzer import CoherenceAnalyzer
 logger = logging.getLogger(__name__)
 
 NOT_FOUND = (
-    "Relevant information was not found "
-    "in the uploaded documents."
+    "I couldn't find information about that in your "
+    "uploaded documents. Please ask about a topic that "
+    "appears in the documents available to this assistant."
 )
+
+# Minimum retrieval quality before the LLM is invoked
+MIN_CHUNK_SCORE = 0.34
+MIN_TOP_RELEVANCE_SCORE = 0.40
+MIN_TERM_OVERLAP_RATIO = 0.18
 
 
 class RAGService:
@@ -98,6 +104,16 @@ class RAGService:
                 )
             )
 
+            if not self._is_retrieval_relevant(
+                question,
+                ranked_results,
+            ):
+                return {
+                    "answer": NOT_FOUND,
+                    "sources": [],
+                    "confidence": 0.0,
+                }
+
             # =====================================================
             # FILTER RESULTS
             # =====================================================
@@ -127,7 +143,7 @@ class RAGService:
             )
 
             # =====================================================
-            # BUILD PROMPT WITH COHERENCE SIGNALS
+            # BUILD PROMPT
             # =====================================================
 
             prompt = (
@@ -136,33 +152,6 @@ class RAGService:
                     context_blocks,
                 )
             )
-
-            # Add dynamic coherence and synthesis signals
-            coherence_signal = (
-                PromptEngineer.build_coherence_signal(
-                    context_blocks
-                )
-            )
-            synthesis_signal = (
-                PromptEngineer.build_context_synthesis_signal(
-                    context_blocks
-                )
-            )
-            continuation_signal = (
-                PromptEngineer.build_continuation_signal(
-                    question
-                )
-            )
-
-            if coherence_signal or synthesis_signal:
-                prompt += (
-                    f"\n\n"
-                    f"SYNTHESIS GUIDANCE:\n"
-                    f"- {synthesis_signal}\n"
-                    f"- {coherence_signal}"
-                )
-                if continuation_signal:
-                    prompt += f"\n- {continuation_signal}"
 
             # =====================================================
             # GENERATE ANSWER
@@ -200,9 +189,7 @@ class RAGService:
                 retry_prompt = (
                     prompt
                     + "\n\n"
-                    + "Rewrite the answer naturally "
-                    + "in concise professional language. "
-                    + "Avoid textbook narration."
+                    + PromptEngineer.direct_answer_reminder()
                 )
 
                 try:
@@ -258,31 +245,15 @@ class RAGService:
                 )
             )
 
-            # =====================================================
-            # VALIDATE AND ENHANCE COHERENCE
-            # =====================================================
-
-            coherence_analysis = (
-                CoherenceAnalyzer.score_answer_coherence(
-                    answer
-                )
-            )
-
-            # If answer is low coherence, try refinement
-            if (
-                not coherence_analysis["is_coherent"]
-                and answer
-                and len(answer) > 50
+            if not self._answer_matches_question(
+                question,
+                answer,
             ):
-
-                refined_answer = (
-                    self._enhance_answer_coherence(
-                        answer
-                    )
-                )
-
-                if refined_answer:
-                    answer = refined_answer
+                return {
+                    "answer": NOT_FOUND,
+                    "sources": [],
+                    "confidence": 0.0,
+                }
 
             # =====================================================
             # FINAL VALIDATION
@@ -291,6 +262,7 @@ class RAGService:
             if (
                 not answer
                 or len(answer.strip()) < 20
+                or self._is_not_found_response(answer)
             ):
 
                 return {
@@ -398,6 +370,13 @@ class RAGService:
                 )
             )
 
+            if not self._is_retrieval_relevant(
+                question,
+                ranked_results,
+            ):
+                yield NOT_FOUND
+                return
+
             relevant_chunks = (
                 self._select_best_chunks(
                     ranked_results
@@ -484,6 +463,9 @@ class RAGService:
                 document_usage[filename]
                 >= 3
             ):
+                continue
+
+            if row.get("final_score", 0) < MIN_CHUNK_SCORE:
                 continue
 
             # Reject weak chunks
@@ -692,16 +674,13 @@ PAGE: {page}
                 exact_phrase_bonus = 0.10
 
             final_score = min(
-
                 1.0,
-
                 (
-                    semantic_score * 0.72
-                    + overlap * 0.22
+                    semantic_score * 0.55
+                    + overlap * 0.35
                     + definition_bonus
                     + exact_phrase_bonus
                 ),
-
             )
 
             ranked.append(
@@ -875,6 +854,107 @@ PAGE: {page}
 
         return weird_ratio > 0.20
 
+    def _term_overlap_ratio(
+        self,
+        question: str,
+        text: str,
+    ) -> float:
+
+        question_terms = self._terms(question)
+
+        if not question_terms:
+            return 0.0
+
+        text_terms = self._terms(text)
+
+        matched = len(
+            question_terms.intersection(text_terms)
+        )
+
+        return matched / len(question_terms)
+
+    def _is_retrieval_relevant(
+        self,
+        question: str,
+        ranked_results: list[dict],
+    ) -> bool:
+
+        if not ranked_results:
+            return False
+
+        top = ranked_results[0]
+        top_score = float(
+            top.get("final_score", 0.0)
+        )
+
+        if top_score < MIN_TOP_RELEVANCE_SCORE:
+            return False
+
+        overlaps = [
+            self._term_overlap_ratio(
+                question,
+                row.get("text", ""),
+            )
+            for row in ranked_results[:4]
+        ]
+
+        max_overlap = max(overlaps) if overlaps else 0.0
+        avg_overlap = (
+            sum(overlaps) / len(overlaps)
+            if overlaps
+            else 0.0
+        )
+
+        question_terms = self._terms(question)
+
+        if not question_terms:
+            return top_score >= 0.52
+
+        if max_overlap >= MIN_TERM_OVERLAP_RATIO:
+            return True
+
+        question_lower = question.lower().strip()
+
+        if question_lower in (
+            top.get("text", "").lower()
+        ):
+            return True
+
+        # High embedding score but no lexical overlap → off-topic query
+        if max_overlap < 0.10 and avg_overlap < 0.08:
+            return False
+
+        if max_overlap < MIN_TERM_OVERLAP_RATIO:
+            return top_score >= 0.62
+
+        return True
+
+    def _answer_matches_question(
+        self,
+        question: str,
+        answer: str,
+    ) -> bool:
+
+        if not answer or self._is_not_found_response(answer):
+            return False
+
+        question_terms = self._terms(question)
+
+        if len(question_terms) < 2:
+            return True
+
+        answer_lower = answer.lower()
+        matched = sum(
+            1
+            for term in question_terms
+            if term in answer_lower
+        )
+
+        if matched >= 1:
+            return True
+
+        return len(answer.split()) < 40
+
     def _terms(
         self,
         text: str,
@@ -936,15 +1016,12 @@ PAGE: {page}
         answer_lower = answer.lower()
 
         indicators = [
-
             "not found",
-
             "no relevant information",
-
             "could not find",
-
             "not available",
-
+            "couldn't find information",
+            "i couldn't find information",
         ]
 
         return any(

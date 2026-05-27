@@ -103,41 +103,26 @@ IMPORTANT RULES:
 
 1. Answer ONLY using the provided document context.
 2. Never invent information not present in the documents.
-3. Ignore corrupted OCR text or unreadable symbols.
-4. Answer naturally in concise professional language.
-5. Keep responses compact and human-readable.
-6. Avoid textbook-style narration.
-7. Avoid storytelling or motivational tone.
-8. Avoid ALL filler phrases such as:
+3. If the context does not cover the user's topic, reply exactly:
+   "I couldn't find information about that in your uploaded documents."
+4. Ignore corrupted OCR text or unreadable symbols.
+5. Write like a helpful expert: clear, natural, and conversational.
+6. Keep answers focused: usually 1-3 short paragraphs (or brief bullets for lists).
+7. Start immediately with the answer — no preamble or meta commentary.
+8. NEVER use phrases such as:
+   - "Here's my response"
+   - "Here is the answer"
+   - "Here's a rewritten response"
+   - "synthesizes the provided documents"
    - "Based on the documents"
    - "According to the uploaded files"
-   - "Here is the answer"
-   - "The answer is"
-   - "In the documents"
    - "From the provided documents"
-   - "It's important to understand"
-   - "Think of it like"
-   - "You'll encounter"
-   - "So there you have it"
-   - "In simple terms"
-9. Avoid repeating concepts.
-10. Avoid huge theory dumps.
-11. Summarize information naturally instead of copying raw text.
-12. Combine information from multiple documents naturally.
-13. Preserve technical correctness.
-14. Do NOT mention OCR extraction or document context.
-15. Ignore noisy OCR fragments and incomplete sentences.
-16. Use short readable paragraphs.
-17. Use bullet points ONLY if necessary.
-18. Start directly with the answer without any preamble.
-19. Sound like a professional AI assistant - natural and conversational.
-20. If information is insufficient, say:
-    "Relevant information was not found in the uploaded documents."
-21. Never say "based on", "according to", "from the", or similar document references.
-22. Make responses feel like they come from a knowledgeable expert, not a lookup system.
-23. Build coherent multi-paragraph responses with natural transitions.
-24. Connect related concepts clearly without abrupt topic switches.
-25. Preserve paragraph flow and context continuity from source materials.
+   - "The answer is"
+9. Do not mention documents, files, context, rewriting, or synthesis.
+10. Avoid textbook tone, storytelling, and repeated ideas.
+11. Summarize in your own words; do not copy long raw passages.
+12. Preserve technical accuracy; use simple language where possible.
+13. Use bullet points only when listing types, steps, or comparisons.
 """
 
     # =========================================================
@@ -161,13 +146,9 @@ The user is asking for a concept definition or explanation.
 
 SPECIAL INSTRUCTIONS:
 
-- Give a direct definition first.
-- Keep the answer within 1-3 short paragraphs.
-- Prefer generalized explanation before subtypes.
-- Avoid unnecessary examples unless helpful.
-- Avoid educational storytelling.
-- Avoid repeating the same idea.
-- Keep explanations precise and clear.
+- Open with a one-sentence definition, then explain briefly.
+- Stay within 1-3 short paragraphs unless listing subtypes.
+- Sound natural, not like a textbook excerpt.
 
 DOCUMENT CONTEXT:
 {context}
@@ -175,7 +156,7 @@ DOCUMENT CONTEXT:
 QUESTION:
 {question}
 
-FINAL ANSWER:
+ANSWER (start directly, no preamble):
 """.strip()
 
     # =========================================================
@@ -235,10 +216,9 @@ The user is asking for a structured list response.
 
 SPECIAL INSTRUCTIONS:
 
-- Use concise bullet points.
-- Explain each item briefly.
-- Avoid repetition.
-- Keep formatting clean and readable.
+- Use concise bullet points for each type or item.
+- One short line per bullet; no repetition.
+- Do not add an introduction sentence before the list.
 
 DOCUMENT CONTEXT:
 {context}
@@ -246,7 +226,7 @@ DOCUMENT CONTEXT:
 QUESTION:
 {question}
 
-STRUCTURED ANSWER:
+ANSWER (start directly, no preamble):
 """.strip()
 
     # =========================================================
@@ -340,11 +320,8 @@ You are an advanced AI knowledge assistant.
 
 SPECIAL INSTRUCTIONS:
 
-- Answer naturally and professionally.
-- Summarize information cleanly.
-- Avoid conversational filler.
-- Keep responses concise and useful.
-- Sound modern and professional.
+- Answer naturally and professionally in 1-3 short paragraphs.
+- Be direct and easy to read.
 
 DOCUMENT CONTEXT:
 {context}
@@ -352,7 +329,7 @@ DOCUMENT CONTEXT:
 QUESTION:
 {question}
 
-FINAL ANSWER:
+ANSWER (start directly, no preamble):
 """.strip()
 
     # =========================================================
@@ -456,12 +433,25 @@ FINAL ANSWER:
             r"^Response:\s*",
             r"^AI Response:\s*",
             r"^FINAL ANSWER:\s*",
+            r"^ANSWER \(start directly.*?\):\s*",
             r"^TECHNICAL EXPLANATION:\s*",
             r"^COMPARISON ANSWER:\s*",
             r"^STEP-BY-STEP ANSWER:\s*",
             r"^STRUCTURED ANSWER:\s*",
+            r"^Here'?s my response:?\s*",
+            r"^Here is (?:the |my )?(?:answer|response):?\s*",
+            r"^Here'?s a rewritten response[^.]*\.?\s*",
+            r"^This (?:answer|response) synthesizes[^.]*\.?\s*",
             r"\[Generated.*?\]",
         ]
+
+        meta_line_patterns = [
+            r"(?im)^.*synthesizes the provided documents.*\n?",
+            r"(?im)^.*rewritten response.*\n?",
+        ]
+
+        for pattern in meta_line_patterns:
+            response = re.sub(pattern, "", response)
 
         for pattern in artifacts:
 
@@ -604,8 +594,18 @@ FINAL ANSWER:
     ) -> str:
 
         return (
-            f'Relevant information about "{question}" '
-            f'was not found in the uploaded documents.'
+            "I couldn't find information about that in your "
+            "uploaded documents. Please ask about a topic that "
+            "appears in the documents available to this assistant."
+        )
+
+    @staticmethod
+    def direct_answer_reminder() -> str:
+        return (
+            "Rewrite as a direct expert answer only. "
+            "Begin immediately with the substance. "
+            "Do not mention documents, rewriting, synthesis, "
+            "or say 'Here is' / 'Here's my response'."
         )
 
     # =========================================================

@@ -377,8 +377,62 @@ document.addEventListener("click", event => {
 });
 
 // ============================================================
-// Source Preview
+// Source Preview / Open Document Page
 // ============================================================
+
+async function openSourceDocument(fileName, page) {
+  try {
+    const params = new URLSearchParams({
+      q: fileName,
+    });
+
+    if (page && String(page) !== "-") {
+      params.set("page", String(page));
+    }
+
+    const response = await api(`/documents/search?${params.toString()}`);
+
+    if (!response.document_id) {
+      toast("Document not found");
+      return;
+    }
+
+    const viewResponse = await fetch(
+      `/api/documents/view/${response.document_id}`,
+      { headers: authHeaders() }
+    );
+
+    if (viewResponse.status === 401 || viewResponse.status === 403) {
+      clearAuthSession();
+      location.href = "/index.html";
+      return;
+    }
+
+    if (!viewResponse.ok) {
+      throw new Error("Could not open document");
+    }
+
+    const blob = await viewResponse.blob();
+    let blobUrl = URL.createObjectURL(blob);
+
+    const isPdf = (response.filename || fileName || "")
+      .toLowerCase()
+      .endsWith(".pdf");
+
+    if (isPdf && page && String(page) !== "-") {
+      blobUrl += `#page=${encodeURIComponent(String(page))}`;
+    }
+
+    window.open(blobUrl, "_blank");
+
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+    }, 120000);
+  } catch (error) {
+    console.error(error);
+    toast(error.message || "Failed to open source document");
+  }
+}
 
 function openSourcePreview() {
   document.querySelector("#sourcePreviewModal")
@@ -390,7 +444,7 @@ function closeSourcePreview() {
     ?.classList.add("hidden");
 }
 
-async function showSourcePreview(fileName) {
+async function showSourcePreview(fileName, page) {
 
   try {
 
@@ -415,8 +469,16 @@ async function showSourcePreview(fileName) {
       </div>
     `;
 
+    const params = new URLSearchParams({
+      q: fileName,
+    });
+
+    if (page && String(page) !== "-") {
+      params.set("page", String(page));
+    }
+
     const response = await api(
-      `/documents/search?q=${encodeURIComponent(fileName)}`
+      `/documents/search?${params.toString()}`
     );
 
     const snippets = response.snippets || [];

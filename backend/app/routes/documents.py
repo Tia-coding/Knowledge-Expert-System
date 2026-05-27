@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.security import (
     decode_access_token,
+    get_current_user,
     require_admin,
 )
 
@@ -627,6 +628,116 @@ async def upload_documents(
         created.append(doc)
 
     return created
+
+
+# =========================================================
+# USER SOURCE LOOKUP (CHAT CITATIONS)
+# =========================================================
+
+def _find_document_by_name(
+    db: Session,
+    name: str,
+) -> Document | None:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return None
+
+    doc = (
+        db.query(Document)
+        .filter(Document.filename == cleaned)
+        .first()
+    )
+
+    if doc:
+        return doc
+
+    return (
+        db.query(Document)
+        .filter(Document.filename.ilike(f"%{cleaned}%"))
+        .first()
+    )
+
+
+@router.get("/documents/search")
+async def search_document_snippets(
+    q: str = Query(..., min_length=1),
+    page: str | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = _find_document_by_name(db, q)
+
+    if not doc:
+        return {
+            "document_id": None,
+            "filename": q.strip(),
+            "snippets": [],
+        }
+
+    snippets = get_vector_store().get_document_snippets(
+        doc.id,
+        limit=100,
+    )
+
+    if page is not None and str(page).strip() not in {"", "-"}:
+        page_value = str(page).strip()
+        filtered = [
+            item
+            for item in snippets
+            if str(item.get("page", "")).strip() == page_value
+        ]
+        if filtered:
+            snippets = filtered
+
+    return {
+        "document_id": doc.id,
+        "filename": doc.filename,
+        "snippets": snippets[:10],
+    }
+
+
+@router.get("/documents/view/{document_id}")
+async def view_document_for_user(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    file_path = Path(settings.upload_dir) / doc.stored_filename
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="File not found",
+        )
+
+    media_type, _ = mimetypes.guess_type(str(file_path))
+
+    if not media_type:
+        media_type = "application/octet-stream"
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=doc.filename,
+        headers={
+            "Content-Disposition": content_disposition(
+                "inline",
+                doc.filename,
+            ),
+        },
+    )
 
 
 # =========================================================

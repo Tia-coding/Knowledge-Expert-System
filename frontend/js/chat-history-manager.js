@@ -384,8 +384,9 @@ class ChatHistoryManager {
     container.querySelectorAll(".source-chip").forEach(chip => {
       chip.addEventListener("click", () => {
         const fileName = chip.dataset.sourceFile;
-        if (typeof showSourcePreview === "function" && fileName) {
-          showSourcePreview(fileName);
+        const page = chip.dataset.sourcePage;
+        if (typeof openSourceDocument === "function" && fileName) {
+          openSourceDocument(fileName, page);
         }
       });
     });
@@ -469,7 +470,8 @@ function renderSourceChips(sources, confidence) {
         type="button"
         class="source-chip"
         data-source-file="${escapeHtml(item.fileName)}"
-        title="${escapeHtml(item.fileName)}"
+        data-source-page="${escapeHtml(String(item.page))}"
+        title="${escapeHtml(item.fileName)} · Page ${escapeHtml(String(item.page))}"
       >
         ${escapeHtml(label)}
       </button>

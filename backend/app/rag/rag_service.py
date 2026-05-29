@@ -24,6 +24,9 @@ NOT_FOUND = (
 MIN_CHUNK_SCORE = 0.34
 MIN_TOP_RELEVANCE_SCORE = 0.40
 MIN_TERM_OVERLAP_RATIO = 0.18
+LOW_CONFIDENCE_THRESHOLD = 0.48
+INSUFFICIENT_CONFIDENCE_THRESHOLD = 0.38
+MAX_RETRIEVAL_EXPANSION_TERMS = 6
 
 
 class RAGService:
@@ -81,9 +84,18 @@ class RAGService:
                 question,
                 conversation_history,
             )
-            context_terms = self._extract_context_terms(
-                conversation_history,
+            is_follow_up = self._needs_context_expansion(
+                question
             )
+            context_terms = (
+                self._extract_context_terms(
+                    conversation_history,
+                    question,
+                )
+                if is_follow_up
+                else None
+            )
+            current_terms = self._terms(question)
 
             search_results = (
                 self.vector_store.search(
@@ -100,20 +112,24 @@ class RAGService:
                     "confidence": 0.0,
                 }
 
-            # =====================================================
-            # RERANK RESULTS
-            # =====================================================
-
             ranked_results = (
                 self._rank_results(
-                    retrieval_query,
+                    question,
                     search_results,
                     context_terms=context_terms,
+                    primary_terms=current_terms,
+                )
+            )
+
+            ranked_results = (
+                self._filter_by_question_focus(
+                    question,
+                    ranked_results,
                 )
             )
 
             if not self._is_retrieval_relevant(
-                retrieval_query,
+                question,
                 ranked_results,
             ):
                 return {
@@ -122,13 +138,10 @@ class RAGService:
                     "confidence": 0.0,
                 }
 
-            # =====================================================
-            # FILTER RESULTS
-            # =====================================================
-
             relevant_chunks = (
                 self._select_best_chunks(
-                    ranked_results
+                    ranked_results,
+                    question,
                 )
             )
 
@@ -193,11 +206,17 @@ class RAGService:
                 or self._looks_like_raw_chunk(
                     answer
                 )
+                or self._is_verbatim_copy(
+                    answer,
+                    relevant_chunks,
+                )
             ):
 
                 retry_prompt = (
                     prompt
                     + "\n\n"
+                    + PromptEngineer.synthesis_reminder()
+                    + "\n"
                     + PromptEngineer.direct_answer_reminder()
                 )
 
@@ -258,12 +277,24 @@ class RAGService:
                 answer
             )
 
-            # Keep only sources whose content informed the final answer.
+            retrieval_confidence = (
+                self._compute_retrieval_confidence(
+                    relevant_chunks
+                )
+            )
+
             sources = self._filter_sources_by_answer_usage(
                 answer,
                 relevant_chunks,
                 sources,
+                question,
             )
+
+            if retrieval_confidence < LOW_CONFIDENCE_THRESHOLD:
+                answer = self._apply_low_confidence_notice(
+                    answer,
+                    retrieval_confidence,
+                )
 
             if not self._answer_matches_question(
                 question,
@@ -297,20 +328,13 @@ class RAGService:
             # =====================================================
 
             confidence = round(
-
-                sum(
-                    row["final_score"]
-                    for row in relevant_chunks
-                )
-                / len(relevant_chunks),
-
+                retrieval_confidence,
                 3,
-
             )
 
             confidence = max(
                 0.10,
-                min(confidence, 0.99)
+                min(confidence, 0.99),
             )
 
             return {
@@ -376,9 +400,18 @@ class RAGService:
                 question,
                 conversation_history,
             )
-            context_terms = self._extract_context_terms(
-                conversation_history,
+            is_follow_up = self._needs_context_expansion(
+                question
             )
+            context_terms = (
+                self._extract_context_terms(
+                    conversation_history,
+                    question,
+                )
+                if is_follow_up
+                else None
+            )
+            current_terms = self._terms(question)
 
             search_results = (
                 self.vector_store.search(
@@ -395,14 +428,22 @@ class RAGService:
 
             ranked_results = (
                 self._rank_results(
-                    retrieval_query,
+                    question,
                     search_results,
                     context_terms=context_terms,
+                    primary_terms=current_terms,
+                )
+            )
+
+            ranked_results = (
+                self._filter_by_question_focus(
+                    question,
+                    ranked_results,
                 )
             )
 
             if not self._is_retrieval_relevant(
-                retrieval_query,
+                question,
                 ranked_results,
             ):
                 yield NOT_FOUND
@@ -410,7 +451,8 @@ class RAGService:
 
             relevant_chunks = (
                 self._select_best_chunks(
-                    ranked_results
+                    ranked_results,
+                    question,
                 )
             )
 
@@ -504,34 +546,32 @@ class RAGService:
     def _extract_context_terms(
         self,
         conversation_history: list[dict] | None,
+        current_question: str = "",
     ) -> set[str]:
-        """Pull topic terms from recent turns to enrich retrieval queries."""
+        """Minimal terms from recent user questions only (avoids answer-topic bleed)."""
 
         if not conversation_history:
             return set()
 
         terms: set[str] = set()
+        current = self._terms(current_question)
 
         user_questions = [
             turn["content"]
             for turn in conversation_history
             if turn.get("role") == "user"
             and (turn.get("content") or "").strip()
-        ][-3:]
+        ][-2:]
 
         for prior_question in user_questions:
             terms.update(self._terms(prior_question))
 
-        assistant_answers = [
-            turn["content"]
-            for turn in conversation_history
-            if turn.get("role") == "assistant"
-            and (turn.get("content") or "").strip()
-        ][-2:]
+        terms -= current
 
-        for prior_answer in assistant_answers:
-            answer_terms = list(self._terms(prior_answer))
-            terms.update(answer_terms[:10])
+        if len(terms) > MAX_RETRIEVAL_EXPANSION_TERMS:
+            terms = set(
+                sorted(terms)[:MAX_RETRIEVAL_EXPANSION_TERMS]
+            )
 
         return terms
 
@@ -540,23 +580,23 @@ class RAGService:
         question: str,
         conversation_history: list[dict] | None,
     ) -> str:
-        """Build search query: current question, expanded with history when needed."""
+        """Expand retrieval only for vague follow-ups, with a small term cap."""
 
         if not conversation_history or not self._needs_context_expansion(
             question
         ):
             return question
 
-        context_terms = self._extract_context_terms(
-            conversation_history
+        extra_terms = self._extract_context_terms(
+            conversation_history,
+            question,
         )
 
-        if not context_terms:
+        if not extra_terms:
             return question
 
         return (
-            f"{question} "
-            f"{' '.join(sorted(context_terms))}"
+            f"{question} {' '.join(sorted(extra_terms))}"
         ).strip()
 
     def _chunk_fingerprint(
@@ -588,56 +628,211 @@ class RAGService:
         answer: str,
         relevant_chunks: list[dict],
         sources: list[dict],
+        question: str = "",
     ) -> list[dict]:
-        """Return deduplicated sources whose chunks overlap with the final answer."""
+        """Map sources to chunks that support both the answer and the question."""
 
         if not answer or not sources:
             return sources
 
         answer_terms = self._terms(answer)
+        question_terms = self._terms(question)
 
         if not answer_terms:
             return sources
 
-        used_keys: set[tuple[str, str]] = set()
+        scored_sources: list[tuple[float, dict]] = []
 
         for row in relevant_chunks:
-            chunk_terms = self._terms(
-                row.get("text", "")
+            metadata = row.get("metadata", {})
+            filename = (
+                metadata.get("filename")
+                or metadata.get("file")
+                or "Unknown Document"
             )
+            page = str(metadata.get("page", "-"))
+            chunk_terms = self._terms(row.get("text", ""))
 
-            overlap = len(
+            if not chunk_terms:
+                continue
+
+            answer_overlap = len(
                 answer_terms.intersection(chunk_terms)
             )
-
-            overlap_ratio = overlap / max(
+            question_overlap = len(
+                question_terms.intersection(chunk_terms)
+            )
+            answer_ratio = answer_overlap / max(
                 len(chunk_terms),
                 1,
             )
 
-            if overlap >= 2 or overlap_ratio >= 0.12:
-                metadata = row.get("metadata", {})
-                filename = (
-                    metadata.get("filename")
-                    or metadata.get("file")
-                    or "Unknown Document"
+            relevance = (
+                answer_ratio * 0.6
+                + (
+                    question_overlap
+                    / max(len(question_terms), 1)
                 )
-                page = str(metadata.get("page", "-"))
-                used_keys.add((filename, page))
+                * 0.4
+            )
 
-        if not used_keys:
+            if (
+                answer_overlap >= 3
+                or (
+                    answer_overlap >= 2
+                    and question_overlap >= 1
+                )
+                or answer_ratio >= 0.14
+            ):
+                scored_sources.append(
+                    (
+                        relevance,
+                        {
+                            "file": filename,
+                            "page": page,
+                            "confidence": round(
+                                row.get("final_score", 0.0),
+                                3,
+                            ),
+                        },
+                    )
+                )
+
+        if not scored_sources:
             return sources[:1]
+
+        scored_sources.sort(
+            key=lambda item: item[0],
+            reverse=True,
+        )
 
         filtered: list[dict] = []
         seen: set[tuple[str, str]] = set()
 
-        for source in sources:
+        for _, source in scored_sources:
             key = (source["file"], source["page"])
-            if key in used_keys and key not in seen:
+            if key not in seen:
                 filtered.append(source)
                 seen.add(key)
 
         return filtered
+
+    def _filter_by_question_focus(
+        self,
+        question: str,
+        ranked_results: list[dict],
+    ) -> list[dict]:
+        """Drop chunks weakly related to the current question (reduces cross-topic bleed)."""
+
+        if len(ranked_results) <= 2:
+            return ranked_results
+
+        question_terms = self._terms(question)
+
+        if not question_terms:
+            return ranked_results
+
+        overlaps = [
+            self._term_overlap_ratio(
+                question,
+                row.get("text", ""),
+            )
+            for row in ranked_results
+        ]
+
+        top_overlap = max(overlaps) if overlaps else 0.0
+        min_keep = max(0.10, top_overlap * 0.40)
+
+        focused = [
+            row
+            for row, overlap in zip(
+                ranked_results,
+                overlaps,
+            )
+            if overlap >= min_keep
+            or float(row.get("final_score", 0)) >= 0.58
+        ]
+
+        return focused if focused else ranked_results[:4]
+
+    def _compute_retrieval_confidence(
+        self,
+        relevant_chunks: list[dict],
+    ) -> float:
+        if not relevant_chunks:
+            return 0.0
+
+        return sum(
+            float(row.get("final_score", 0.0))
+            for row in relevant_chunks
+        ) / len(relevant_chunks)
+
+    def _apply_low_confidence_notice(
+        self,
+        answer: str,
+        retrieval_confidence: float,
+    ) -> str:
+        if not answer or self._is_not_found_response(answer):
+            return answer
+
+        if answer.startswith(
+            "I found limited information"
+        ) or answer.startswith(
+            "The uploaded documents do not"
+        ):
+            return answer
+
+        level = (
+            "insufficient"
+            if retrieval_confidence
+            < INSUFFICIENT_CONFIDENCE_THRESHOLD
+            else "limited"
+        )
+
+        return (
+            PromptEngineer.low_confidence_preamble(level)
+            + answer.strip()
+        )
+
+    def _is_verbatim_copy(
+        self,
+        answer: str,
+        chunks: list[dict],
+    ) -> bool:
+        """Detect answers pasted from retrieved chunks."""
+
+        answer_norm = re.sub(
+            r"\s+",
+            " ",
+            answer.lower(),
+        ).strip()
+
+        for row in chunks:
+            text = row.get("text", "")
+            for sentence in self._extract_sentences(text):
+                sent = re.sub(
+                    r"\s+",
+                    " ",
+                    sentence.lower(),
+                ).strip()
+                if (
+                    len(sent.split()) >= 10
+                    and sent in answer_norm
+                ):
+                    return True
+
+            words = text.lower().split()
+            for idx in range(len(words) - 11):
+                phrase = " ".join(
+                    words[idx: idx + 12]
+                )
+                if (
+                    len(phrase) > 45
+                    and phrase in answer_norm
+                ):
+                    return True
+
+        return False
 
     # =========================================================
     # SELECT BEST CHUNKS
@@ -646,6 +841,7 @@ class RAGService:
     def _select_best_chunks(
         self,
         ranked_results: list[dict],
+        question: str | None = None,
     ) -> list[dict]:
 
         relevant_chunks = []
@@ -655,6 +851,16 @@ class RAGService:
         )
 
         semantic_fingerprints = set()
+
+        top_question_overlap = 0.0
+
+        if question and ranked_results:
+            top_question_overlap = (
+                self._term_overlap_ratio(
+                    question,
+                    ranked_results[0].get("text", ""),
+                )
+            )
 
         for row in ranked_results:
 
@@ -683,6 +889,23 @@ class RAGService:
 
             if row.get("final_score", 0) < MIN_CHUNK_SCORE:
                 continue
+
+            if question:
+                chunk_overlap = (
+                    self._term_overlap_ratio(
+                        question,
+                        text,
+                    )
+                )
+                min_overlap = max(
+                    0.08,
+                    top_question_overlap * 0.35,
+                )
+                if (
+                    chunk_overlap < min_overlap
+                    and row.get("final_score", 0) < 0.52
+                ):
+                    continue
 
             # Reject weak chunks
             if len(text.split()) < 20:
@@ -819,14 +1042,13 @@ PAGE: {page}
         question: str,
         results: list[dict],
         context_terms: set[str] | None = None,
+        primary_terms: set[str] | None = None,
     ) -> list[dict]:
+        """Rerank: prioritize current-question overlap; light history boost on follow-ups."""
 
-        question_terms = self._terms(question)
-
-        if context_terms:
-            question_terms = question_terms.union(
-                context_terms
-            )
+        current_terms = primary_terms or self._terms(
+            question
+        )
 
         ranked = []
 
@@ -849,18 +1071,12 @@ PAGE: {page}
             )
 
             overlap = (
-
                 len(
-                    question_terms.intersection(
+                    current_terms.intersection(
                         text_terms
                     )
                 )
-
-                / max(
-                    len(question_terms),
-                    1,
-                )
-
+                / max(len(current_terms), 1)
             )
 
             context_overlap = 0.0
@@ -896,12 +1112,16 @@ PAGE: {page}
 
                 exact_phrase_bonus = 0.10
 
+            history_weight = (
+                0.06 if context_terms else 0.0
+            )
+
             final_score = min(
                 1.0,
                 (
-                    semantic_score * 0.50
-                    + overlap * 0.30
-                    + context_overlap * 0.15
+                    semantic_score * 0.52
+                    + overlap * 0.36
+                    + context_overlap * history_weight
                     + definition_bonus
                     + exact_phrase_bonus
                 ),
@@ -1168,7 +1388,8 @@ PAGE: {page}
         ):
             question_terms = question_terms.union(
                 self._extract_context_terms(
-                    conversation_history
+                    conversation_history,
+                    question,
                 )
             )
 

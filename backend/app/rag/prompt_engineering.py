@@ -20,76 +20,121 @@ class PromptEngineer:
     """Prompt engineering utility for intelligent RAG responses."""
 
     # =========================================================
-    # QUESTION TYPE DETECTION
+    # ANSWER TYPE DETECTION (dynamic, not topic-specific)
     # =========================================================
 
     @staticmethod
-    def detect_question_type(question: str) -> str:
+    def detect_answer_type(question: str) -> str:
+        """Classify how the answer should be structured."""
 
-        question_lower = question.lower().strip()
+        q = question.lower().strip()
 
-        if any(
-            word in question_lower
-            for word in [
-                "what is",
-                "define",
-                "meaning",
-                "explain what",
-            ]
-        ):
-            return "definition"
+        if re.search(r"\balgorithm\b", q) or "pseudocode" in q:
+            return "algorithm"
 
         if any(
-            word in question_lower
-            for word in [
-                "how to",
-                "how do",
-                "steps",
-                "procedure",
-                "process",
-            ]
-        ):
-            return "how-to"
-
-        if any(
-            word in question_lower
-            for word in [
-                "list",
-                "types",
-                "kinds",
-                "enumerate",
-            ]
-        ):
-            return "list"
-
-        if any(
-            word in question_lower
-            for word in [
-                "difference",
-                "compare",
-                "vs",
-                "versus",
-            ]
+            phrase in q
+            for phrase in (
+                "difference between",
+                "compare ",
+                " vs ",
+                " versus ",
+                "differ from",
+                "similarities and",
+            )
         ):
             return "comparison"
 
         if any(
-            word in question_lower
-            for word in [
-                "algorithm",
-                "code",
-                "database",
-                "implementation",
-                "program",
-                "function",
-                "class",
-                "data structure",
-                "sql",
-            ]
+            word in q
+            for word in ("advantage", "benefits", "pros", "merits")
         ):
-            return "technical"
+            return "advantages"
+
+        if any(
+            word in q
+            for word in ("disadvantage", "drawbacks", "cons", "limitations")
+        ):
+            return "disadvantages"
+
+        if any(
+            phrase in q
+            for phrase in (
+                "how to",
+                "how do",
+                "steps to",
+                "procedure",
+                "process for",
+                "walk me through",
+            )
+        ) or re.search(r"\bsteps\b", q):
+            return "procedure"
+
+        if any(
+            word in q
+            for word in (
+                "implementation",
+                "implement",
+                "write code",
+                "program for",
+                "source code",
+            )
+        ):
+            return "implementation"
+
+        if any(
+            phrase in q
+            for phrase in (
+                "what is",
+                "what are",
+                "define",
+                "meaning of",
+                "explain what",
+            )
+        ):
+            return "definition"
+
+        if q.startswith("explain") or q.startswith("describe"):
+            return "explanation"
+
+        if any(
+            word in q
+            for word in ("list", "types of", "kinds of", "enumerate")
+        ):
+            return "list"
 
         return "general"
+
+    @staticmethod
+    def detect_question_type(question: str) -> str:
+        """Backward-compatible alias for answer-type detection."""
+        return PromptEngineer.detect_answer_type(question)
+
+    @staticmethod
+    def anti_copy_rules() -> str:
+        return """
+TUTORING & SYNTHESIS RULES:
+- Read the retrieved chunks, understand them, then write a fresh explanation in your own words.
+- Do NOT copy sentences or long phrases from the source text verbatim.
+- Act like an academic tutor: clear, structured, and student-friendly.
+- Answer ONLY the topic in the user's question; ignore unrelated concepts in the context.
+- If a context block is off-topic, skip it entirely.
+- Use short examples only when they clarify the concept.
+"""
+
+    @staticmethod
+    def low_confidence_preamble(level: str = "limited") -> str:
+        if level == "insufficient":
+            return (
+                "The uploaded documents do not contain enough information "
+                "to answer this accurately.\n\n"
+                "Here is the best grounded summary from what is available:\n\n"
+            )
+        return (
+            "I found limited information in the uploaded documents "
+            "related to this question.\n\n"
+            "Here is the best grounded summary from what is available:\n\n"
+        )
 
     # =========================================================
     # COMMON RULES
@@ -138,6 +183,7 @@ class PromptEngineer:
         """Combine synthesis, coherence, and continuation guidance."""
 
         signals = [
+            "Use only context passages that directly relate to the current question.",
             PromptEngineer.build_context_synthesis_signal(context_blocks),
             PromptEngineer.build_coherence_signal(context_blocks),
             PromptEngineer.build_continuation_signal(conversation_history),
@@ -179,33 +225,19 @@ class PromptEngineer:
     @staticmethod
     def common_rules() -> str:
 
-        return """
+        return f"""
 IMPORTANT RULES:
 
 1. Answer ONLY using the provided document context.
-2. Never invent information not present in the documents.
-3. If the context does not cover the user's topic, reply exactly:
-   "I couldn't find information about that in your uploaded documents."
-4. Ignore corrupted OCR text or unreadable symbols.
-5. Write like a helpful expert: clear, natural, and conversational.
-6. Keep answers focused: usually 1-3 short paragraphs (or brief bullets for lists).
-7. Start immediately with the answer — no preamble or meta commentary.
-8. NEVER use phrases such as:
-   - "Here's my response"
-   - "Here is the answer"
-   - "Here's a rewritten response"
-   - "synthesizes the provided documents"
-   - "Based on the documents"
-   - "According to the uploaded files"
-   - "From the provided documents"
-   - "The answer is"
-9. Do not mention documents, files, context, rewriting, or synthesis.
-10. Avoid textbook tone, storytelling, and repeated ideas.
-11. Summarize in your own words; do not copy long raw passages.
-12. Preserve technical accuracy; use simple language where possible.
-13. Use bullet points only when listing types, steps, or comparisons.
-14. For follow-up questions, resolve pronouns and references using recent conversation.
-15. When documents provide limited coverage, answer from available context and note gaps briefly.
+2. Never invent facts not supported by the context.
+3. Ignore corrupted OCR text or unreadable symbols.
+4. Start immediately with the answer — no preamble or meta commentary.
+5. Do not mention documents, files, context, rewriting, or synthesis.
+6. Preserve technical accuracy; use simple language where possible.
+7. For follow-up questions, resolve pronouns using recent conversation.
+8. If context is thin, give the best grounded summary you can without guessing.
+
+{PromptEngineer.anti_copy_rules()}
 """
 
     # =========================================================
@@ -222,22 +254,28 @@ IMPORTANT RULES:
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an advanced AI knowledge assistant.
-
-The user is asking for a concept definition or explanation.
+You are an academic tutor.
 
 {PromptEngineer.common_rules()}
 
-SPECIAL INSTRUCTIONS:
+FORMAT (use these section labels exactly):
 
-- Open with a one-sentence definition, then explain briefly.
-- Stay within 1-3 short paragraphs unless listing subtypes.
-- Sound natural, not like a textbook excerpt.
+Definition:
+(One clear sentence in your own words.)
+
+Key Characteristics:
+(2-4 concise bullets.)
+
+Example:
+(One short, concrete example if supported by context.)
+
+Applications:
+(1-3 real uses if supported by context.)
 
 DOCUMENT CONTEXT:
 {context}
 
-ANSWER (start directly, no preamble):
+Write the formatted answer now:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -252,7 +290,7 @@ ANSWER (start directly, no preamble):
     # =========================================================
 
     @staticmethod
-    def build_how_to_prompt(
+    def build_procedure_prompt(
         question: str,
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
@@ -261,24 +299,83 @@ ANSWER (start directly, no preamble):
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an advanced AI assistant.
-
-The user is asking for procedural guidance.
+You are an academic tutor explaining a procedure.
 
 {PromptEngineer.common_rules()}
 
-SPECIAL INSTRUCTIONS:
+FORMAT:
 
-- Explain steps clearly and practically.
-- Use numbered steps when useful.
-- Focus on actionable guidance.
-- Avoid unnecessary theory.
-- Keep explanations concise.
+Steps:
+1. (First step in your own words)
+2. (Continue numbering)
+...
+
+Notes:
+(Brief caveats or tips only if supported by context.)
 
 DOCUMENT CONTEXT:
 {context}
 
-STEP-BY-STEP ANSWER:
+Write the formatted answer now:
+""".strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
+
+    @staticmethod
+    def build_how_to_prompt(
+        question: str,
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+        return PromptEngineer.build_procedure_prompt(
+            question,
+            context_blocks,
+            conversation_history,
+        )
+
+    @staticmethod
+    def build_algorithm_prompt(
+        question: str,
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+
+        context = "\n\n".join(context_blocks)
+
+        base = f"""
+You are an academic tutor explaining an algorithm from the documents.
+
+{PromptEngineer.common_rules()}
+
+FORMAT (use these section labels exactly):
+
+Algorithm:
+(Name of the algorithm)
+
+Steps:
+1.
+2.
+3.
+(Continue as needed — each step in your own words.)
+
+Time Complexity:
+(State if present in context, otherwise write "Not specified in the documents.")
+
+Space Complexity:
+(State if present in context, otherwise write "Not specified in the documents.")
+
+Explanation:
+(Short intuitive explanation in your own words.)
+
+DOCUMENT CONTEXT:
+{context}
+
+Write the formatted answer now:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -341,23 +438,23 @@ ANSWER (start directly, no preamble):
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an advanced AI assistant.
-
-The user is asking for a comparison.
+You are an academic tutor comparing concepts.
 
 {PromptEngineer.common_rules()}
 
-SPECIAL INSTRUCTIONS:
+FORMAT:
 
-- Clearly explain differences and similarities.
-- Focus on key distinctions.
-- Keep explanations concise.
-- Use tables ONLY if useful.
+Comparison Table:
+| Feature | Item A | Item B |
+(3-6 rows of the most important distinctions)
+
+Summary:
+(2-3 sentences synthesizing the key difference in your own words.)
 
 DOCUMENT CONTEXT:
 {context}
 
-COMPARISON ANSWER:
+Write the formatted answer now:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -372,7 +469,7 @@ COMPARISON ANSWER:
     # =========================================================
 
     @staticmethod
-    def build_technical_prompt(
+    def build_implementation_prompt(
         question: str,
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
@@ -381,31 +478,148 @@ COMPARISON ANSWER:
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an expert technical AI assistant.
-
-The user is asking a technical question.
+You are an academic tutor explaining an implementation.
 
 {PromptEngineer.common_rules()}
 
-SPECIAL INSTRUCTIONS:
+FORMAT:
 
-- Preserve technical correctness.
-- Explain technical concepts clearly.
-- Simplify complex workflows naturally.
-- Use concise examples only if useful.
-- Avoid huge theory dumps.
-- Avoid verbose explanations.
+Overview:
+(Brief summary in your own words.)
+
+Approach:
+(Numbered steps or bullets for the implementation logic.)
+
+Notes:
+(Constraints, pitfalls, or requirements from context only.)
 
 DOCUMENT CONTEXT:
 {context}
 
-TECHNICAL EXPLANATION:
+Write the formatted answer now:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
             base,
             context_blocks,
             question,
+            conversation_history,
+        )
+
+    @staticmethod
+    def build_explanation_prompt(
+        question: str,
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+
+        context = "\n\n".join(context_blocks)
+
+        base = f"""
+You are an academic tutor giving a clear explanation.
+
+{PromptEngineer.common_rules()}
+
+FORMAT:
+
+Explanation:
+(2-3 short paragraphs in your own words.)
+
+Key Points:
+- (3-5 concise bullets)
+
+DOCUMENT CONTEXT:
+{context}
+
+Write the formatted answer now:
+""".strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
+
+    @staticmethod
+    def build_advantages_prompt(
+        question: str,
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+
+        context = "\n\n".join(context_blocks)
+
+        base = f"""
+You are an academic tutor.
+
+{PromptEngineer.common_rules()}
+
+FORMAT:
+
+Advantages:
+- (Concise bullets in your own words)
+
+Summary:
+(One short closing sentence.)
+
+DOCUMENT CONTEXT:
+{context}
+
+Write the formatted answer now:
+""".strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
+
+    @staticmethod
+    def build_disadvantages_prompt(
+        question: str,
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+
+        context = "\n\n".join(context_blocks)
+
+        base = f"""
+You are an academic tutor.
+
+{PromptEngineer.common_rules()}
+
+FORMAT:
+
+Disadvantages:
+- (Concise bullets in your own words)
+
+Summary:
+(One short closing sentence.)
+
+DOCUMENT CONTEXT:
+{context}
+
+Write the formatted answer now:
+""".strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
+
+    @staticmethod
+    def build_technical_prompt(
+        question: str,
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+        return PromptEngineer.build_explanation_prompt(
+            question,
+            context_blocks,
             conversation_history,
         )
 
@@ -465,75 +679,30 @@ ANSWER (start directly, no preamble):
                 )
             )
 
-        question_type = (
-            PromptEngineer
-            .detect_question_type(
-                question
-            )
+        answer_type = PromptEngineer.detect_answer_type(question)
+
+        builders = {
+            "definition": PromptEngineer.build_definition_prompt,
+            "algorithm": PromptEngineer.build_algorithm_prompt,
+            "procedure": PromptEngineer.build_procedure_prompt,
+            "comparison": PromptEngineer.build_comparison_prompt,
+            "advantages": PromptEngineer.build_advantages_prompt,
+            "disadvantages": PromptEngineer.build_disadvantages_prompt,
+            "implementation": PromptEngineer.build_implementation_prompt,
+            "explanation": PromptEngineer.build_explanation_prompt,
+            "list": PromptEngineer.build_list_prompt,
+            "general": PromptEngineer.build_general_prompt,
+        }
+
+        builder = builders.get(
+            answer_type,
+            PromptEngineer.build_general_prompt,
         )
 
-        if question_type == "definition":
-
-            return (
-                PromptEngineer
-                .build_definition_prompt(
-                    question,
-                    context_blocks,
-                    conversation_history,
-                )
-            )
-
-        elif question_type == "how-to":
-
-            return (
-                PromptEngineer
-                .build_how_to_prompt(
-                    question,
-                    context_blocks,
-                    conversation_history,
-                )
-            )
-
-        elif question_type == "list":
-
-            return (
-                PromptEngineer
-                .build_list_prompt(
-                    question,
-                    context_blocks,
-                    conversation_history,
-                )
-            )
-
-        elif question_type == "comparison":
-
-            return (
-                PromptEngineer
-                .build_comparison_prompt(
-                    question,
-                    context_blocks,
-                    conversation_history,
-                )
-            )
-
-        elif question_type == "technical":
-
-            return (
-                PromptEngineer
-                .build_technical_prompt(
-                    question,
-                    context_blocks,
-                    conversation_history,
-                )
-            )
-
-        return (
-            PromptEngineer
-            .build_general_prompt(
-                question,
-                context_blocks,
-                conversation_history,
-            )
+        return builder(
+            question,
+            context_blocks,
+            conversation_history,
         )
 
     # =========================================================
@@ -605,34 +774,31 @@ ANSWER (start directly, no preamble):
         lines = response.split("\n")
         cleaned_lines = []
 
+        structured_line = re.compile(
+            r"^(\d+\.|[-•*]|\||[A-Z][a-zA-Z ]+:|#{1,3}\s)",
+        )
+
         for line in lines:
-            # Normalize spaces within line
             line = re.sub(r"[ \t]+", " ", line)
             line = line.strip()
 
-            # Only keep non-empty lines
             if line:
                 cleaned_lines.append(line)
 
-        # Reconstruct with paragraph awareness
         paragraphs = []
         current_para = []
 
         for line in cleaned_lines:
-            # If line was empty (paragraph break)
-            if not line:
+            if structured_line.match(line):
                 if current_para:
-                    paragraphs.append(
-                        " ".join(current_para)
-                    )
+                    paragraphs.append("\n".join(current_para))
                     current_para = []
+                paragraphs.append(line)
             else:
                 current_para.append(line)
 
         if current_para:
-            paragraphs.append(
-                " ".join(current_para)
-            )
+            paragraphs.append("\n".join(current_para))
 
         # Remove duplicate paragraphs
         seen = set()
@@ -722,10 +888,17 @@ ANSWER (start directly, no preamble):
     @staticmethod
     def direct_answer_reminder() -> str:
         return (
-            "Rewrite as a direct expert answer only. "
-            "Begin immediately with the substance. "
-            "Do not mention documents, rewriting, synthesis, "
-            "or say 'Here is' / 'Here's my response'."
+            "Rewrite in your own words using the required format. "
+            "Do not copy source sentences. "
+            "Stay strictly on the asked topic. "
+            "Begin immediately with the formatted sections."
+        )
+
+    @staticmethod
+    def synthesis_reminder() -> str:
+        return (
+            "Read the context, understand it, then produce a fresh tutor-style "
+            "explanation. No verbatim copying from the source text."
         )
 
     # =========================================================
@@ -784,11 +957,9 @@ ANSWER (start directly, no preamble):
             )
 
         return (
-            "Synthesize information naturally "
-            "from multiple sources without "
-            "jarring transitions. "
-            "Connect related concepts from "
-            "different sections seamlessly."
+            "Synthesize only information relevant to the user's question. "
+            "Ignore off-topic sections in the context. "
+            "Connect related ideas smoothly in your own words."
         )
 
     @staticmethod

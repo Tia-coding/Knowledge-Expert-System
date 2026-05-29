@@ -15,9 +15,13 @@ from app.rag.coherence_analyzer import CoherenceAnalyzer
 logger = logging.getLogger(__name__)
 
 NOT_FOUND = (
-    "I couldn't find information about that in your "
-    "uploaded documents. Please ask about a topic that "
-    "appears in the documents available to this assistant."
+    "This question does not appear to be covered in the "
+    "uploaded documents."
+)
+
+NOT_FOUND_INSUFFICIENT = (
+    "The uploaded documents do not contain enough "
+    "information to answer this question."
 )
 
 # Minimum retrieval quality before the LLM is invoked
@@ -125,6 +129,7 @@ class RAGService:
                 self._filter_by_question_focus(
                     question,
                     ranked_results,
+                    conversation_history,
                 )
             )
 
@@ -306,11 +311,25 @@ class RAGService:
                 answer,
                 conversation_history,
             ):
-                return {
-                    "answer": NOT_FOUND,
-                    "sources": [],
-                    "confidence": 0.0,
-                }
+                if (
+                    conversation_history
+                    and self._needs_context_expansion(question)
+                    and relevant_chunks
+                    and len(answer.split()) >= 20
+                    and not self._is_not_found_response(answer)
+                ):
+                    pass
+                else:
+                    return {
+                        "answer": (
+                            NOT_FOUND_INSUFFICIENT
+                            if retrieval_confidence
+                            < INSUFFICIENT_CONFIDENCE_THRESHOLD
+                            else NOT_FOUND
+                        ),
+                        "sources": [],
+                        "confidence": 0.0,
+                    }
 
             # =====================================================
             # FINAL VALIDATION
@@ -444,6 +463,7 @@ class RAGService:
                 self._filter_by_question_focus(
                     question,
                     ranked_results,
+                    conversation_history,
                 )
             )
 
@@ -571,22 +591,36 @@ class RAGService:
         terms: set[str] = set()
         current = self._terms(current_question)
 
+        q_lower = (current_question or "").lower()
+        needs_broad_history = any(
+            word in q_lower
+            for word in (
+                "them",
+                "both",
+                "these",
+                "those",
+                "difference between",
+                "compare",
+            )
+        )
+
+        history_limit = 4 if needs_broad_history else 2
+        term_cap = 10 if needs_broad_history else MAX_RETRIEVAL_EXPANSION_TERMS
+
         user_questions = [
             turn["content"]
             for turn in conversation_history
             if turn.get("role") == "user"
             and (turn.get("content") or "").strip()
-        ][-2:]
+        ][-history_limit:]
 
         for prior_question in user_questions:
             terms.update(self._terms(prior_question))
 
         terms -= current
 
-        if len(terms) > MAX_RETRIEVAL_EXPANSION_TERMS:
-            terms = set(
-                sorted(terms)[:MAX_RETRIEVAL_EXPANSION_TERMS]
-            )
+        if len(terms) > term_cap:
+            terms = set(sorted(terms)[:term_cap])
 
         return terms
 
@@ -736,20 +770,35 @@ class RAGService:
         self,
         question: str,
         ranked_results: list[dict],
+        conversation_history: list[dict] | None = None,
     ) -> list[dict]:
         """Drop chunks weakly related to the current question (reduces cross-topic bleed)."""
 
         if len(ranked_results) <= 2:
             return ranked_results
 
-        question_terms = self._terms(question)
+        focus_question = question
+        if (
+            conversation_history
+            and self._needs_context_expansion(question)
+        ):
+            extra = self._extract_context_terms(
+                conversation_history,
+                question,
+            )
+            if extra:
+                focus_question = (
+                    f"{question} {' '.join(sorted(extra))}"
+                )
+
+        question_terms = self._terms(focus_question)
 
         if not question_terms:
             return ranked_results
 
         overlaps = [
             self._term_overlap_ratio(
-                question,
+                focus_question,
                 row.get("text", ""),
             )
             for row in ranked_results
@@ -1531,6 +1580,8 @@ PAGE: {page}
             "not available",
             "couldn't find information",
             "i couldn't find information",
+            "does not appear to be covered",
+            "do not contain enough information",
         ]
 
         return any(

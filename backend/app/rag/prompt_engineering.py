@@ -79,15 +79,28 @@ class PromptEngineer:
         return PromptEngineer.detect_answer_type(question)
 
     @staticmethod
+    def grounding_rules() -> str:
+        return """
+DOCUMENT GROUNDING:
+- Use ONLY the provided document context. Never invent facts.
+- Synthesize across multiple context blocks when they support the same topic.
+- If several passages are relevant, combine them into one coherent explanation.
+- If information is partial, state limitations briefly then give the best grounded summary.
+- If the context does not cover the question, say clearly that the uploaded documents
+  do not contain enough information — do not guess.
+- The CURRENT QUESTION always has highest priority; conversation history clarifies
+  follow-ups but must not override what the user is asking now.
+"""
+
+    @staticmethod
     def anti_copy_rules() -> str:
         return """
 TUTORING & SYNTHESIS RULES:
-- Read the retrieved chunks, understand them, then write a fresh explanation in your own words.
-- Do NOT copy sentences or long phrases from the source text verbatim.
-- Act like an academic tutor: clear, structured, and student-friendly.
-- Answer ONLY the topic in the user's question; ignore unrelated concepts in the context.
-- If a context block is off-topic, skip it entirely.
-- Use short examples only when they clarify the concept.
+- Read all relevant chunks, understand them, then explain naturally in your own words.
+- Do NOT copy sentences or long passages from the source text.
+- Write like a professor or tutor — not a PDF dump.
+- Answer ONLY the topic in the current question; skip off-topic context blocks.
+- Use examples only when they appear in the documents and help understanding.
 """
 
     @staticmethod
@@ -95,7 +108,7 @@ TUTORING & SYNTHESIS RULES:
         if level == "insufficient":
             return (
                 "The uploaded documents do not contain enough information "
-                "to answer this accurately.\n\n"
+                "to answer this question.\n\n"
                 "Here is the best grounded summary from what is available:\n\n"
             )
         return (
@@ -213,7 +226,12 @@ FORMATTING:
         if enrichment:
             sections.append(f"GUIDANCE:\n{enrichment}")
 
-        sections.append(f"QUESTION:\n{question.strip()}")
+        sections.append(
+            "PRIORITY:\n"
+            "Answer the CURRENT QUESTION below. "
+            "Use conversation history only to clarify follow-ups."
+        )
+        sections.append(f"CURRENT QUESTION:\n{question.strip()}")
 
         return "\n\n".join(sections)
 
@@ -229,15 +247,15 @@ FORMATTING:
         return f"""
 IMPORTANT RULES:
 
-1. Answer ONLY using the provided document context.
-2. Never invent facts not supported by the context.
-3. Ignore corrupted OCR text or unreadable symbols.
-4. Start immediately with the answer — no preamble or meta commentary.
-5. Do not mention documents, files, context, rewriting, or synthesis.
-6. Preserve technical accuracy; use simple language where possible.
-7. For follow-up questions, continue the same topic from recent conversation.
-8. If the user asks to elaborate (e.g. "explain in detail"), expand the prior topic — do not treat it as a new unrelated question.
-9. If context is thin, give the best grounded summary you can without guessing.
+1. Start immediately with the answer — no preamble.
+2. Do not mention documents, files, context, or synthesis.
+3. Ignore corrupted OCR text.
+4. Preserve technical accuracy; use clear educational language.
+5. For follow-ups, use conversation history to resolve pronouns and topics.
+6. If the user asks to elaborate, expand the SAME topic from the prior turn.
+7. Never say information was not found when the context and conversation already cover the topic.
+
+{PromptEngineer.grounding_rules()}
 
 {formatting}
 
@@ -260,27 +278,29 @@ IMPORTANT RULES:
         follow_up_note = ""
         if conversation_history and len(conversation_history) >= 2:
             follow_up_note = (
-                "\nThis may be a follow-up — use the recent conversation to "
-                "identify the topic and expand naturally on what was already said.\n"
+                "\nFOLLOW-UP: The user is continuing the same discussion. "
+                "Identify the topic from recent turns and answer the CURRENT QUESTION. "
+                "For 'explain in detail' / 'elaborate', expand with more concepts and "
+                "examples from the documents — never claim the topic was not found.\n"
             )
 
         base = f"""
-You are a knowledgeable tutor helping a student understand material from their course documents.
+You are a knowledgeable tutor. Explain concepts naturally from the course documents.
 
 {PromptEngineer.common_rules(conversational=True)}
 {follow_up_note}
 
 STYLE:
-- Write a clear, natural explanation in your own words (2-4 short paragraphs).
-- Sound like ChatGPT: direct, educational, conversational — not a rigid worksheet.
-- Do NOT force labels such as Definition, Key Characteristics, Example, or Applications.
-- You may use a brief heading or bullets only if it genuinely helps clarity.
-- For "explain in detail" or similar follow-ups, deepen the previous answer on the same topic.
+- Write 2-5 clear paragraphs in your own words — like ChatGPT or a professor.
+- Do NOT use rigid templates (Definition / Key Characteristics / Applications / Example).
+- Do NOT force section headings unless they genuinely help.
+- Combine evidence from all relevant context blocks into one coherent explanation.
+- Answer the current question directly, then add useful depth.
 
 DOCUMENT CONTEXT:
 {context}
 
-Write your answer now (start directly, no preamble):
+Write your answer now:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -379,6 +399,9 @@ FORMAT — include ONLY sections supported by the documents:
 
 Algorithm:
 (Name of the algorithm)
+
+Description:
+(Brief overview in your own words.)
 
 Steps:
 1. (Complete first step)
@@ -826,6 +849,10 @@ Write the formatted answer now:
             r"additionally,?\s*",
             r"consequently,?\s*",
             r"nevertheless,?\s*",
+            r"historically speaking,?\s*",
+            r"in essence,?\s*",
+            r"fundamentally,?\s*",
+            r"generally speaking,?\s*",
             r"based on (the )?(provided )?(document )?context,?\s*",
             r"according to (the )?(uploaded )?documents?,?\s*",
             r"from the (provided )?context,?\s*",
@@ -837,6 +864,10 @@ Write the formatted answer now:
             "reference",
             "note",
             "notes",
+            "historically speaking",
+            "in essence",
+            "fundamentally",
+            "generally speaking",
         }
 
         cleaned: list[str] = []
@@ -1275,9 +1306,8 @@ Write the formatted answer now:
     ) -> str:
 
         return (
-            "I couldn't find information about that in your "
-            "uploaded documents. Please ask about a topic that "
-            "appears in the documents available to this assistant."
+            "This question does not appear to be covered in the "
+            "uploaded documents."
         )
 
     @staticmethod
@@ -1293,8 +1323,9 @@ Write the formatted answer now:
     @staticmethod
     def synthesis_reminder() -> str:
         return (
-            "Read the context, understand it, then produce a fresh tutor-style "
-            "explanation. No verbatim copying from the source text."
+            "Synthesize all relevant context into a natural tutor-style explanation. "
+            "Use your own words. No verbatim copying. "
+            "If this is a follow-up, expand the same topic — do not say information is missing."
         )
 
     # =========================================================
@@ -1353,9 +1384,9 @@ Write the formatted answer now:
             )
 
         return (
-            "Synthesize only information relevant to the user's question. "
-            "Ignore off-topic sections in the context. "
-            "Connect related ideas smoothly in your own words."
+            "Multiple document passages are available. "
+            "Read all relevant passages, merge duplicate ideas, and produce ONE "
+            "coherent answer. Do not rely on only the first passage if others add value."
         )
 
     @staticmethod
@@ -1385,10 +1416,9 @@ Write the formatted answer now:
             return ""
 
         return (
-            "This is a follow-up question. "
-            "Resolve pronouns and references (e.g. 'them', 'it', 'both', 'in detail') "
-            "using the recent conversation. "
-            "If the user asks to elaborate or explain in detail, expand the SAME topic "
-            "from the previous turn — do not switch topics or say information was not found. "
-            "Build on prior answers without repeating verbatim."
+            "This is a follow-up. Resolve pronouns ('them', 'it', 'both') and "
+            "vague requests ('explain in detail', 'elaborate') using recent conversation. "
+            "The current question still controls what to deliver. "
+            "Never respond that information was not found if the topic was already discussed "
+            "and document context is available — expand instead."
         )

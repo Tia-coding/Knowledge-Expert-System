@@ -1,7 +1,3 @@
-/**
- * ChatGPT-style conversation manager for the user dashboard.
- */
-
 class ChatHistoryManager {
   constructor() {
     this.currentConversationId = null;
@@ -351,24 +347,15 @@ class ChatHistoryManager {
         return;
       }
 
-      const confidenceBadge =
-        typeof msg.confidence === "number"
-          ? `<span class="bubble-confidence ${getConfidenceClass(msg.confidence)}">${formatConfidence(msg.confidence)}</span>`
-          : "";
-
-      const sourceChips = renderSourceChips(
-        msg.sources || [],
-        msg.confidence
-      );
+      const sourceChips = renderSourceChips(msg.sources || []);
 
       html.push(`
         <div class="message-row message-row-assistant">
           <div class="message-stack">
             <div class="bubble-meta">
               <span class="bubble-role">Assistant</span>
-              ${confidenceBadge}
             </div>
-            <div class="bubble bubble-assistant">${escapeHtml(msg.answer || "")}</div>
+            <div class="bubble bubble-assistant">${renderFormattedAnswer(msg.answer || "")}</div>
             ${sourceChips ? `<div class="bubble-sources">${sourceChips}</div>` : ""}
             <span class="bubble-time">${escapeHtml(time)}</span>
           </div>
@@ -408,7 +395,7 @@ class ChatHistoryManager {
       return;
     }
 
-    renderSourcesPanel(sourcesEl, latest.sources || [], latest.confidence);
+    renderSourcesPanel(sourcesEl, latest.sources || []);
   }
 
   clearSourcesPanel() {
@@ -443,7 +430,7 @@ function formatMessageTime(value) {
   });
 }
 
-function renderSourceChips(sources, confidence) {
+function renderSourceChips(sources) {
   if (!sources || !sources.length) {
     return "";
   }
@@ -479,7 +466,7 @@ function renderSourceChips(sources, confidence) {
   }).join("");
 }
 
-function renderSourcesPanel(sourcesEl, sources, confidence) {
+function renderSourcesPanel(sourcesEl, sources) {
   if (!sources || !sources.length) {
     sourcesEl.innerHTML =
       '<p class="muted">No source citations available.</p>';
@@ -504,13 +491,11 @@ function renderSourcesPanel(sourcesEl, sources, confidence) {
   sourcesEl.innerHTML = uniqueSources.map(source => {
     const fileName =
       source.file || source.filename || source.document || "Unknown Document";
-    const sourceConfidence = source.confidence ?? confidence;
 
     return `
       <div class="source" data-source-file="${escapeHtml(fileName)}" data-source-page="${source.page || "-"}">
         <strong title="${escapeHtml(fileName)}">${shortFileName(fileName)}</strong>
-        <span>Page: ${source.page || "-"}</span>
-        <span>Confidence: ${formatConfidence(sourceConfidence)}</span>
+        <span>Page ${source.page || "-"}</span>
       </div>
     `;
   }).join("");
@@ -525,21 +510,186 @@ function renderSourcesPanel(sourcesEl, sources, confidence) {
   });
 }
 
-function formatConfidence(confidence) {
-  if (typeof confidence !== "number") {
-    return "N/A";
+function renderFormattedAnswer(text) {
+  if (!text) {
+    return "";
   }
-  return `${Math.round(confidence * 100)}%`;
-}
 
-function getConfidenceClass(confidence) {
-  if (confidence >= 0.8) {
-    return "confidence-high";
+  const normalized = String(text)
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1");
+
+  const lines = normalized.split("\n");
+  const parts = [];
+  let listType = null;
+  let tableRows = [];
+  let pseudoLines = [];
+  let inPseudoSection = false;
+
+  function flushPseudoBlock() {
+    if (!pseudoLines.length) {
+      inPseudoSection = false;
+      return;
+    }
+    parts.push(
+      `<pre class="answer-code"><code>${escapeHtml(pseudoLines.join("\n"))}</code></pre>`
+    );
+    pseudoLines = [];
+    inPseudoSection = false;
   }
-  if (confidence >= 0.5) {
-    return "confidence-medium";
+
+  function closeList() {
+    if (listType === "ul") {
+      parts.push("</ul>");
+    } else if (listType === "ol") {
+      parts.push("</ol>");
+    }
+    listType = null;
   }
-  return "confidence-low";
+
+  function flushTable() {
+    if (!tableRows.length) {
+      return;
+    }
+
+    const rows = tableRows
+      .map(row =>
+        row
+          .split("|")
+          .map(cell => cell.trim())
+          .filter(Boolean)
+      )
+      .filter(cells => cells.length >= 2);
+
+    tableRows = [];
+
+    if (!rows.length) {
+      return;
+    }
+
+    const header = rows[0];
+    const body = rows.slice(1);
+
+    parts.push('<div class="answer-table-wrap"><table class="answer-table">');
+    parts.push(
+      `<thead><tr>${header.map(cell => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead>`
+    );
+    parts.push("<tbody>");
+    body.forEach(cells => {
+      parts.push(
+        `<tr>${cells.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`
+      );
+    });
+    parts.push("</tbody></table></div>");
+  }
+
+  lines.forEach(line => {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      if (inPseudoSection) {
+        pseudoLines.push("");
+        return;
+      }
+      closeList();
+      flushTable();
+      flushPseudoBlock();
+      return;
+    }
+
+    if (inPseudoSection) {
+      const nestedSection = trimmed.match(
+        /^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$/
+      );
+      if (nestedSection && nestedSection[1].length <= 45) {
+        flushPseudoBlock();
+      } else {
+        pseudoLines.push(trimmed);
+        return;
+      }
+    }
+
+    if (trimmed.includes("|") && trimmed.split("|").length >= 3) {
+      if (/^[\s|:-]+$/.test(trimmed.replace(/\|/g, ""))) {
+        return;
+      }
+      closeList();
+      tableRows.push(trimmed);
+      return;
+    }
+
+    if (tableRows.length) {
+      flushTable();
+    }
+
+    const sectionMatch = trimmed.match(
+      /^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$/
+    );
+
+    if (sectionMatch && sectionMatch[1].length <= 45) {
+      closeList();
+      flushPseudoBlock();
+      const title = sectionMatch[1];
+      const rest = sectionMatch[2];
+      inPseudoSection = /pseudo\s*code/i.test(title);
+      parts.push(
+        `<h4 class="answer-heading">${escapeHtml(title)}</h4>`
+      );
+      if (rest) {
+        if (inPseudoSection) {
+          pseudoLines.push(rest);
+        } else {
+          parts.push(`<p class="answer-p">${escapeHtml(rest)}</p>`);
+        }
+      }
+      return;
+    }
+
+    const numberedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+    if (numberedMatch) {
+      if (listType !== "ol") {
+        closeList();
+        parts.push('<ol class="answer-list answer-list-ordered">');
+        listType = "ol";
+      }
+      parts.push(`<li>${escapeHtml(numberedMatch[2])}</li>`);
+      return;
+    }
+
+    const bulletMatch = trimmed.match(/^[-•*]\s+(.+)$/);
+    if (bulletMatch) {
+      if (listType !== "ul") {
+        closeList();
+        parts.push('<ul class="answer-list">');
+        listType = "ul";
+      }
+      parts.push(`<li>${escapeHtml(bulletMatch[1])}</li>`);
+      return;
+    }
+
+    if (
+      /^(for|while|if|else|return|def |function |procedure |begin\b|end\b|loop\b)/i.test(
+        trimmed
+      ) ||
+      (trimmed.endsWith(";") && trimmed.length < 120)
+    ) {
+      closeList();
+      parts.push(
+        `<pre class="answer-code"><code>${escapeHtml(trimmed)}</code></pre>`
+      );
+      return;
+    }
+
+    closeList();
+    parts.push(`<p class="answer-p">${escapeHtml(trimmed)}</p>`);
+  });
+
+  closeList();
+  flushTable();
+  flushPseudoBlock();
+
+  return `<div class="answer-content">${parts.join("")}</div>`;
 }
 
 function shortFileName(fileName) {

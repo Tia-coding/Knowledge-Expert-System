@@ -131,10 +131,22 @@ TUTORING & SYNTHESIS RULES:
                 "Here is the best grounded summary from what is available:\n\n"
             )
         return (
-            "I found limited information in the uploaded documents "
-            "related to this question.\n\n"
+            "Based on the uploaded documents, the available information "
+            "is limited.\n\n"
             "Here is the best grounded summary from what is available:\n\n"
         )
+
+    @staticmethod
+    def formatting_rules() -> str:
+        return """
+FORMATTING (required):
+- Use plain text only. Do NOT use markdown: no **, no __, no #, no backticks.
+- Write section titles as "Section Name:" on their own line (no bold).
+- Omit any section entirely if the documents lack supporting information.
+- Never leave empty sections, placeholders, or lines like "N/A" or "Not specified".
+- Use numbered lists (1. 2. 3.) for steps; use hyphen bullets (- item) for characteristics.
+- Complete every numbered step with real content; never output blank step numbers.
+"""
 
     # =========================================================
     # COMMON RULES
@@ -237,6 +249,8 @@ IMPORTANT RULES:
 7. For follow-up questions, resolve pronouns using recent conversation.
 8. If context is thin, give the best grounded summary you can without guessing.
 
+{PromptEngineer.formatting_rules()}
+
 {PromptEngineer.anti_copy_rules()}
 """
 
@@ -258,19 +272,19 @@ You are an academic tutor.
 
 {PromptEngineer.common_rules()}
 
-FORMAT (use these section labels exactly):
+FORMAT — include ONLY sections supported by the documents:
 
 Definition:
 (One clear sentence in your own words.)
 
 Key Characteristics:
-(2-4 concise bullets.)
+(- bullet per characteristic)
 
 Example:
-(One short, concrete example if supported by context.)
+(Only if the documents provide an example.)
 
 Applications:
-(1-3 real uses if supported by context.)
+(Only if the documents mention real uses.)
 
 DOCUMENT CONTEXT:
 {context}
@@ -303,15 +317,21 @@ You are an academic tutor explaining a procedure.
 
 {PromptEngineer.common_rules()}
 
-FORMAT:
+FORMAT — include ONLY sections supported by the documents:
+
+Objective:
+(One sentence goal.)
 
 Steps:
 1. (First step in your own words)
-2. (Continue numbering)
+2. (Continue with complete steps only)
 ...
 
-Notes:
-(Brief caveats or tips only if supported by context.)
+Important Notes:
+(Optional caveats if in context.)
+
+Example:
+(Optional walkthrough if in context.)
 
 DOCUMENT CONTEXT:
 {context}
@@ -352,25 +372,27 @@ You are an academic tutor explaining an algorithm from the documents.
 
 {PromptEngineer.common_rules()}
 
-FORMAT (use these section labels exactly):
+FORMAT — include ONLY sections supported by the documents:
 
 Algorithm:
 (Name of the algorithm)
 
 Steps:
-1.
-2.
-3.
-(Continue as needed — each step in your own words.)
+1. (Complete first step)
+2. (Complete second step)
+(Continue numbering; every step must have content.)
+
+Pseudo Code:
+(Only if pseudocode or code appears in the documents.)
 
 Time Complexity:
-(State if present in context, otherwise write "Not specified in the documents.")
+(Only if stated in the documents.)
 
 Space Complexity:
-(State if present in context, otherwise write "Not specified in the documents.")
+(Only if stated in the documents.)
 
 Explanation:
-(Short intuitive explanation in your own words.)
+(Short intuitive summary in your own words.)
 
 DOCUMENT CONTEXT:
 {context}
@@ -446,10 +468,10 @@ FORMAT:
 
 Comparison Table:
 | Feature | Item A | Item B |
-(3-6 rows of the most important distinctions)
+(3-6 rows; use real names from the question instead of Item A/B when possible)
 
 Summary:
-(2-3 sentences synthesizing the key difference in your own words.)
+(2-3 sentences in your own words.)
 
 DOCUMENT CONTEXT:
 {context}
@@ -706,16 +728,148 @@ ANSWER (start directly, no preamble):
         )
 
     # =========================================================
-    # RESPONSE CLEANING
+    # RESPONSE CLEANING & PRESENTATION
     # =========================================================
 
     @staticmethod
-    def clean_response(response: str) -> str:
+    def strip_markdown(text: str) -> str:
+        """Remove common markdown markers from model output."""
+
+        if not text:
+            return text
+
+        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+        text = re.sub(r"__(.+?)__", r"\1", text)
+        text = re.sub(r"\*(.+?)\*", r"\1", text)
+        text = re.sub(r"`(.+?)`", r"\1", text)
+        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        return text
+
+    @staticmethod
+    def _is_placeholder_content(content: str) -> bool:
+        normalized = re.sub(
+            r"\s+",
+            " ",
+            (content or "").strip().lower(),
+        )
+        normalized = normalized.rstrip(".,;:")
+
+        if not normalized:
+            return True
+
+        placeholders = (
+            "n/a",
+            "na",
+            "none",
+            "not available",
+            "not specified",
+            "not specified in the documents",
+            "not mentioned",
+            "no information",
+            "not provided",
+            "-",
+            "...",
+        )
+
+        if normalized in placeholders:
+            return True
+
+        return normalized.startswith(
+            (
+                "not specified",
+                "not available",
+                "no information",
+            )
+        )
+
+    @staticmethod
+    def remove_empty_sections(text: str) -> str:
+        """Drop section headers with no substantive body."""
+
+        if not text:
+            return text
+
+        lines = text.split("\n")
+        blocks: list[tuple[str | None, list[str]]] = []
+        current_header: str | None = None
+        current_body: list[str] = []
+        preamble: list[str] = []
+
+        header_pattern = re.compile(
+            r"^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$",
+        )
+
+        def flush_block() -> None:
+            nonlocal current_header, current_body
+            if current_header is not None:
+                blocks.append((current_header, current_body))
+            elif current_body:
+                preamble.extend(current_body)
+            current_header = None
+            current_body = []
+
+        for line in lines:
+            match = header_pattern.match(line.strip())
+            if match and len(match.group(1)) <= 45:
+                flush_block()
+                current_header = match.group(1).strip()
+                rest = match.group(2).strip()
+                current_body = [rest] if rest else []
+            else:
+                if current_header is not None:
+                    current_body.append(line)
+                else:
+                    preamble.append(line)
+
+        flush_block()
+
+        output: list[str] = []
+
+        if preamble:
+            preamble_text = "\n".join(preamble).strip()
+            if preamble_text:
+                output.append(preamble_text)
+
+        for header, body_lines in blocks:
+            body = "\n".join(body_lines).strip()
+            if PromptEngineer._is_placeholder_content(body):
+                continue
+            output.append(f"{header}:\n{body}" if body else f"{header}:")
+
+        return "\n\n".join(
+            block for block in output if block.strip()
+        ).strip()
+
+    @staticmethod
+    def fix_incomplete_steps(text: str) -> str:
+        """Remove empty numbered list items."""
+
+        if not text:
+            return text
+
+        cleaned: list[str] = []
+
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if re.match(r"^\d+\.\s*$", stripped):
+                continue
+            if re.match(r"^\d+\.\s*\.{2,}\s*$", stripped):
+                continue
+            cleaned.append(line)
+
+        return "\n".join(cleaned)
+
+    @staticmethod
+    def clean_response(
+        response: str,
+        question: str = "",
+    ) -> str:
 
         if not response:
             return response
 
         response = response.strip()
+        response = PromptEngineer.strip_markdown(response)
 
         artifacts = [
             r"^Answer:\s*",
@@ -821,6 +975,13 @@ ANSWER (start directly, no preamble):
             deduped_paragraphs
         ).strip()
 
+        response = PromptEngineer.fix_incomplete_steps(
+            response
+        )
+        response = PromptEngineer.remove_empty_sections(
+            response
+        )
+
         # Remove incomplete sentence endings
         response = re.sub(
             r"(and|or|because|since|therefore)\s*$",
@@ -850,25 +1011,27 @@ ANSWER (start directly, no preamble):
                     : -len(ending)
                 ].strip()
 
-        paragraphs = response.split("\n\n")
-
-        # Cap at 5 coherent paragraphs
-        if len(paragraphs) > 5:
-
-            response = "\n\n".join(
-                paragraphs[:5]
+        # Cap unstructured essays only; keep full structured answers intact.
+        has_sections = bool(
+            re.search(
+                r"(?m)^[A-Z][A-Za-z0-9 /&]+:\s*$",
+                response,
             )
+        )
 
-        # Ensure proper ending punctuation
+        if not has_sections:
+            paragraphs = response.split("\n\n")
+            if len(paragraphs) > 6:
+                response = "\n\n".join(paragraphs[:6])
+
         if (
             response
-            and response[-1]
-            not in ".!?"
+            and response[-1] not in ".!?"
+            and not response.endswith(":")
         ):
-
             response += "."
 
-        return response
+        return response.strip()
 
     # =========================================================
     # NO ANSWER RESPONSE
@@ -888,9 +1051,10 @@ ANSWER (start directly, no preamble):
     @staticmethod
     def direct_answer_reminder() -> str:
         return (
-            "Rewrite in your own words using the required format. "
+            "Rewrite in your own words using the required plain-text format. "
+            "No markdown. No empty sections. "
             "Do not copy source sentences. "
-            "Stay strictly on the asked topic. "
+            "Complete every numbered step. "
             "Begin immediately with the formatted sections."
         )
 

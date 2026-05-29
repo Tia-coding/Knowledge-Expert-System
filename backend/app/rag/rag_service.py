@@ -267,10 +267,9 @@ class RAGService:
             # CLEAN RESPONSE
             # =====================================================
 
-            answer = (
-                PromptEngineer.clean_response(
-                    answer
-                )
+            answer = PromptEngineer.clean_response(
+                answer,
+                question,
             )
 
             answer = self._enhance_answer_coherence(
@@ -775,10 +774,10 @@ class RAGService:
         if not answer or self._is_not_found_response(answer):
             return answer
 
-        if answer.startswith(
-            "I found limited information"
-        ) or answer.startswith(
-            "The uploaded documents do not"
+        if (
+            answer.startswith("Based on the uploaded documents")
+            or answer.startswith("I found limited information")
+            or answer.startswith("The uploaded documents do not")
         ):
             return answer
 

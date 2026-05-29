@@ -12,7 +12,7 @@ Optimized for:
 - Concise professional responses
 """
 
-from typing import List
+from typing import List, Optional
 import re
 
 
@@ -96,6 +96,87 @@ class PromptEngineer:
     # =========================================================
 
     @staticmethod
+    def format_conversation_history(
+        conversation_history: Optional[List[dict]] = None,
+        max_turns: int = 6,
+    ) -> str:
+        """Format prior turns for prompt injection (current question is separate)."""
+
+        if not conversation_history:
+            return ""
+
+        # Each stored row is user+assistant; cap total message pairs.
+        recent = conversation_history[-(max_turns * 2):]
+
+        lines: list[str] = []
+        for turn in recent:
+            role = turn.get("role", "")
+            content = (turn.get("content") or "").strip()
+            if not content:
+                continue
+
+            label = "User" if role == "user" else "Assistant"
+            if role == "assistant" and len(content) > 1200:
+                content = content[:1200].strip() + "..."
+
+            lines.append(f"{label}: {content}")
+
+        if not lines:
+            return ""
+
+        return (
+            "RECENT CONVERSATION (for follow-up context only — "
+            "answer using document context below):\n"
+            + "\n\n".join(lines)
+        )
+
+    @staticmethod
+    def build_enrichment_signals(
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+        """Combine synthesis, coherence, and continuation guidance."""
+
+        signals = [
+            PromptEngineer.build_context_synthesis_signal(context_blocks),
+            PromptEngineer.build_coherence_signal(context_blocks),
+            PromptEngineer.build_continuation_signal(conversation_history),
+        ]
+
+        return "\n".join(
+            signal for signal in signals if signal
+        )
+
+    @staticmethod
+    def _append_prompt_sections(
+        base: str,
+        context_blocks: List[str],
+        question: str,
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+        """Inject conversation memory and multi-chunk synthesis guidance."""
+
+        history_block = PromptEngineer.format_conversation_history(
+            conversation_history
+        )
+        enrichment = PromptEngineer.build_enrichment_signals(
+            context_blocks,
+            conversation_history,
+        )
+
+        sections = [base.strip()]
+
+        if history_block:
+            sections.append(history_block)
+
+        if enrichment:
+            sections.append(f"GUIDANCE:\n{enrichment}")
+
+        sections.append(f"QUESTION:\n{question.strip()}")
+
+        return "\n\n".join(sections)
+
+    @staticmethod
     def common_rules() -> str:
 
         return """
@@ -123,6 +204,8 @@ IMPORTANT RULES:
 11. Summarize in your own words; do not copy long raw passages.
 12. Preserve technical accuracy; use simple language where possible.
 13. Use bullet points only when listing types, steps, or comparisons.
+14. For follow-up questions, resolve pronouns and references using recent conversation.
+15. When documents provide limited coverage, answer from available context and note gaps briefly.
 """
 
     # =========================================================
@@ -133,11 +216,12 @@ IMPORTANT RULES:
     def build_definition_prompt(
         question: str,
         context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
 
         context = "\n\n".join(context_blocks)
 
-        return f"""
+        base = f"""
 You are an advanced AI knowledge assistant.
 
 The user is asking for a concept definition or explanation.
@@ -153,11 +237,15 @@ SPECIAL INSTRUCTIONS:
 DOCUMENT CONTEXT:
 {context}
 
-QUESTION:
-{question}
-
 ANSWER (start directly, no preamble):
 """.strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
 
     # =========================================================
     # HOW-TO PROMPT
@@ -167,11 +255,12 @@ ANSWER (start directly, no preamble):
     def build_how_to_prompt(
         question: str,
         context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
 
         context = "\n\n".join(context_blocks)
 
-        return f"""
+        base = f"""
 You are an advanced AI assistant.
 
 The user is asking for procedural guidance.
@@ -189,11 +278,15 @@ SPECIAL INSTRUCTIONS:
 DOCUMENT CONTEXT:
 {context}
 
-QUESTION:
-{question}
-
 STEP-BY-STEP ANSWER:
 """.strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
 
     # =========================================================
     # LIST PROMPT
@@ -203,11 +296,12 @@ STEP-BY-STEP ANSWER:
     def build_list_prompt(
         question: str,
         context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
 
         context = "\n\n".join(context_blocks)
 
-        return f"""
+        base = f"""
 You are an advanced AI assistant.
 
 The user is asking for a structured list response.
@@ -223,11 +317,15 @@ SPECIAL INSTRUCTIONS:
 DOCUMENT CONTEXT:
 {context}
 
-QUESTION:
-{question}
-
 ANSWER (start directly, no preamble):
 """.strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
 
     # =========================================================
     # COMPARISON PROMPT
@@ -237,11 +335,12 @@ ANSWER (start directly, no preamble):
     def build_comparison_prompt(
         question: str,
         context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
 
         context = "\n\n".join(context_blocks)
 
-        return f"""
+        base = f"""
 You are an advanced AI assistant.
 
 The user is asking for a comparison.
@@ -258,11 +357,15 @@ SPECIAL INSTRUCTIONS:
 DOCUMENT CONTEXT:
 {context}
 
-QUESTION:
-{question}
-
 COMPARISON ANSWER:
 """.strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
 
     # =========================================================
     # TECHNICAL PROMPT
@@ -272,11 +375,12 @@ COMPARISON ANSWER:
     def build_technical_prompt(
         question: str,
         context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
 
         context = "\n\n".join(context_blocks)
 
-        return f"""
+        base = f"""
 You are an expert technical AI assistant.
 
 The user is asking a technical question.
@@ -295,11 +399,15 @@ SPECIAL INSTRUCTIONS:
 DOCUMENT CONTEXT:
 {context}
 
-QUESTION:
-{question}
-
 TECHNICAL EXPLANATION:
 """.strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
 
     # =========================================================
     # GENERAL PROMPT
@@ -309,11 +417,12 @@ TECHNICAL EXPLANATION:
     def build_general_prompt(
         question: str,
         context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
 
         context = "\n\n".join(context_blocks)
 
-        return f"""
+        base = f"""
 You are an advanced AI knowledge assistant.
 
 {PromptEngineer.common_rules()}
@@ -326,11 +435,15 @@ SPECIAL INSTRUCTIONS:
 DOCUMENT CONTEXT:
 {context}
 
-QUESTION:
-{question}
-
 ANSWER (start directly, no preamble):
 """.strip()
+
+        return PromptEngineer._append_prompt_sections(
+            base,
+            context_blocks,
+            question,
+            conversation_history,
+        )
 
     # =========================================================
     # MAIN PROMPT SELECTOR
@@ -340,6 +453,7 @@ ANSWER (start directly, no preamble):
     def build_prompt(
         question: str,
         context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
 
         if not context_blocks:
@@ -365,6 +479,7 @@ ANSWER (start directly, no preamble):
                 .build_definition_prompt(
                     question,
                     context_blocks,
+                    conversation_history,
                 )
             )
 
@@ -375,6 +490,7 @@ ANSWER (start directly, no preamble):
                 .build_how_to_prompt(
                     question,
                     context_blocks,
+                    conversation_history,
                 )
             )
 
@@ -385,6 +501,7 @@ ANSWER (start directly, no preamble):
                 .build_list_prompt(
                     question,
                     context_blocks,
+                    conversation_history,
                 )
             )
 
@@ -395,6 +512,7 @@ ANSWER (start directly, no preamble):
                 .build_comparison_prompt(
                     question,
                     context_blocks,
+                    conversation_history,
                 )
             )
 
@@ -405,6 +523,7 @@ ANSWER (start directly, no preamble):
                 .build_technical_prompt(
                     question,
                     context_blocks,
+                    conversation_history,
                 )
             )
 
@@ -413,6 +532,7 @@ ANSWER (start directly, no preamble):
             .build_general_prompt(
                 question,
                 context_blocks,
+                conversation_history,
             )
         )
 
@@ -693,23 +813,18 @@ ANSWER (start directly, no preamble):
 
     @staticmethod
     def build_continuation_signal(
-        conversation_context: str | None,
+        conversation_history: Optional[List[dict]] = None,
     ) -> str:
         """Build signals for conversation continuity."""
-        if (
-            not conversation_context
-            or len(conversation_context.split()) < 20
-        ):
+        if not conversation_history:
             return ""
 
-        # Detect if this is a follow-up
-        if "\n\nUser:" in conversation_context:
-            return (
-                "This is a follow-up question. "
-                "Build on the previous context "
-                "and avoid repeating information "
-                "already covered. Reference prior "
-                "concepts only when clarifying."
-            )
+        if len(conversation_history) < 2:
+            return ""
 
-        return ""
+        return (
+            "This is a follow-up question. "
+            "Resolve pronouns and references (e.g. 'them', 'it', 'both') "
+            "using the recent conversation. "
+            "Build on prior answers without repeating information already covered."
+        )

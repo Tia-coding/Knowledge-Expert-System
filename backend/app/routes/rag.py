@@ -55,75 +55,43 @@ def conversation_title(question: str) -> str:
 
 
 # =========================================================
-# BUILD CONVERSATION CONTEXT
+# LOAD CONVERSATION HISTORY (structured turns for LLM memory)
 # =========================================================
 
-def build_conversation_context(
+def load_conversation_history(
     db: Session,
     user_id: int,
-    current_question: str,
     conversation_id: str,
     limit: int = 6,
-) -> str:
+) -> list[dict[str, str]]:
+    """Return prior turns as structured role/content pairs (excludes current question)."""
 
     rows = (
-
         db.query(ChatHistory)
-
         .filter(
             ChatHistory.user_id == user_id,
             ChatHistory.conversation_id == conversation_id,
         )
-
-        .order_by(
-            ChatHistory.created_at.asc()
-        )
-
+        .order_by(ChatHistory.created_at.asc())
         .all()
-
     )
 
     if len(rows) > limit:
         rows = rows[-limit:]
 
-    if not rows:
-
-        return current_question
-
-    conversation_parts = []
+    history: list[dict[str, str]] = []
 
     for row in rows:
-
-        question = (
-            row.question or ""
-        ).strip()
-
-        answer = (
-            row.answer or ""
-        ).strip()
+        question = (row.question or "").strip()
+        answer = (row.answer or "").strip()
 
         if not question or not answer:
             continue
 
-        short_answer = (
-            answer[:1200]
-            .strip()
-        )
+        history.append({"role": "user", "content": question})
+        history.append({"role": "assistant", "content": answer})
 
-        conversation_parts.append(
-
-            f"User: {question}\n"
-            f"Assistant: {short_answer}"
-
-        )
-
-    conversation_parts.append(
-        f"User: {current_question}"
-    )
-
-    return "\n\n".join(
-        conversation_parts
-    )
+    return history
 
 
 # =========================================================
@@ -171,42 +139,21 @@ async def ask(
         or new_conversation_id()
     )
 
-    # =====================================================
-    # BUILD CONVERSATIONAL MEMORY
-    # =====================================================
-
-    contextual_question = (
-        build_conversation_context(
-
-            db=db,
-
-            user_id=current_user.id,
-
-            current_question=question,
-
-            conversation_id=conversation_id,
-
-            limit=6,
-
-        )
+    # Prior turns for LLM memory; current question stays separate for retrieval.
+    conversation_history = load_conversation_history(
+        db=db,
+        user_id=current_user.id,
+        conversation_id=conversation_id,
+        limit=6,
     )
 
-    # =====================================================
-    # GENERATE RESPONSE
-    # =====================================================
-
     result = await RAGService().answer(
-
         db=db,
-
         user=current_user,
-
-        question=contextual_question,
-
+        question=question,
+        conversation_history=conversation_history,
         model=payload.model,
-
         top_k=payload.top_k,
-
     )
 
     # =====================================================
@@ -316,34 +263,17 @@ async def ask_stream(
 
         )
 
-    # =====================================================
-    # BUILD CONTEXTUAL QUESTION
-    # =====================================================
-
     conversation_id = (
         (payload.conversation_id or "").strip()
         or new_conversation_id()
     )
 
-    contextual_question = (
-        build_conversation_context(
-
-            db=db,
-
-            user_id=current_user.id,
-
-            current_question=question,
-
-            conversation_id=conversation_id,
-
-            limit=6,
-
-        )
+    conversation_history = load_conversation_history(
+        db=db,
+        user_id=current_user.id,
+        conversation_id=conversation_id,
+        limit=6,
     )
-
-    # =====================================================
-    # STREAM GENERATOR
-    # =====================================================
 
     async def event_generator():
 
@@ -352,17 +282,12 @@ async def ask_stream(
         try:
 
             async for chunk in (
-
                 RAGService().stream_answer(
-
-                    question=contextual_question,
-
+                    question=question,
+                    conversation_history=conversation_history,
                     model=payload.model,
-
                     top_k=payload.top_k,
-
                 )
-
             ):
 
                 if not chunk:

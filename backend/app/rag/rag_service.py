@@ -47,6 +47,7 @@ class RAGService:
         db: Session,
         user: User,
         question: str,
+        conversation_history: list[dict] | None = None,
         model: str | None = None,
         top_k: int | None = None,
     ) -> dict:
@@ -74,13 +75,19 @@ class RAGService:
                 )
             )
 
-            # =====================================================
-            # VECTOR SEARCH
-            # =====================================================
+            # Retrieval uses an expanded query for vague follow-ups;
+            # the LLM receives the current question plus structured history.
+            retrieval_query = self._build_retrieval_query(
+                question,
+                conversation_history,
+            )
+            context_terms = self._extract_context_terms(
+                conversation_history,
+            )
 
             search_results = (
                 self.vector_store.search(
-                    question,
+                    retrieval_query,
                     requested_top_k,
                 )
             )
@@ -99,13 +106,14 @@ class RAGService:
 
             ranked_results = (
                 self._rank_results(
-                    question,
+                    retrieval_query,
                     search_results,
+                    context_terms=context_terms,
                 )
             )
 
             if not self._is_retrieval_relevant(
-                question,
+                retrieval_query,
                 ranked_results,
             ):
                 return {
@@ -150,6 +158,7 @@ class RAGService:
                 PromptEngineer.build_prompt(
                     question,
                     context_blocks,
+                    conversation_history,
                 )
             )
 
@@ -245,9 +254,21 @@ class RAGService:
                 )
             )
 
+            answer = self._enhance_answer_coherence(
+                answer
+            )
+
+            # Keep only sources whose content informed the final answer.
+            sources = self._filter_sources_by_answer_usage(
+                answer,
+                relevant_chunks,
+                sources,
+            )
+
             if not self._answer_matches_question(
                 question,
                 answer,
+                conversation_history,
             ):
                 return {
                     "answer": NOT_FOUND,
@@ -327,6 +348,7 @@ class RAGService:
     async def stream_answer(
         self,
         question: str,
+        conversation_history: list[dict] | None = None,
         model: str | None = None,
         top_k: int | None = None,
     ) -> AsyncGenerator[str, None]:
@@ -350,9 +372,17 @@ class RAGService:
                 or self.settings.rag_top_k
             )
 
+            retrieval_query = self._build_retrieval_query(
+                question,
+                conversation_history,
+            )
+            context_terms = self._extract_context_terms(
+                conversation_history,
+            )
+
             search_results = (
                 self.vector_store.search(
-                    question,
+                    retrieval_query,
                     requested_top_k,
                 )
             )
@@ -365,13 +395,14 @@ class RAGService:
 
             ranked_results = (
                 self._rank_results(
-                    question,
+                    retrieval_query,
                     search_results,
+                    context_terms=context_terms,
                 )
             )
 
             if not self._is_retrieval_relevant(
-                question,
+                retrieval_query,
                 ranked_results,
             ):
                 yield NOT_FOUND
@@ -399,6 +430,7 @@ class RAGService:
                 PromptEngineer.build_prompt(
                     question,
                     context_blocks,
+                    conversation_history,
                 )
             )
 
@@ -422,6 +454,190 @@ class RAGService:
                 "An error occurred while "
                 "streaming the response."
             )
+
+    # =========================================================
+    # CONVERSATION-AWARE RETRIEVAL
+    # =========================================================
+
+    def _needs_context_expansion(
+        self,
+        question: str,
+    ) -> bool:
+        """Detect vague follow-ups that need prior-turn terms for retrieval."""
+
+        q = question.lower().strip()
+        words = q.split()
+
+        reference_words = {
+            "them", "their", "they", "it", "its",
+            "this", "that", "these", "those",
+            "both", "each", "other", "former", "latter",
+        }
+
+        has_pronoun = any(
+            word.strip("?.,!") in reference_words
+            for word in words
+        )
+
+        comparison_phrases = (
+            "difference between",
+            "compare",
+            " vs ",
+            " versus ",
+            "similarities",
+            "differences",
+            "tell me more",
+            "explain more",
+            "explain further",
+            "what about",
+            "how about",
+        )
+
+        if has_pronoun or any(
+            phrase in q for phrase in comparison_phrases
+        ):
+            return True
+
+        # Very short utterances in a thread are usually follow-ups.
+        return len(words) <= 4
+
+    def _extract_context_terms(
+        self,
+        conversation_history: list[dict] | None,
+    ) -> set[str]:
+        """Pull topic terms from recent turns to enrich retrieval queries."""
+
+        if not conversation_history:
+            return set()
+
+        terms: set[str] = set()
+
+        user_questions = [
+            turn["content"]
+            for turn in conversation_history
+            if turn.get("role") == "user"
+            and (turn.get("content") or "").strip()
+        ][-3:]
+
+        for prior_question in user_questions:
+            terms.update(self._terms(prior_question))
+
+        assistant_answers = [
+            turn["content"]
+            for turn in conversation_history
+            if turn.get("role") == "assistant"
+            and (turn.get("content") or "").strip()
+        ][-2:]
+
+        for prior_answer in assistant_answers:
+            answer_terms = list(self._terms(prior_answer))
+            terms.update(answer_terms[:10])
+
+        return terms
+
+    def _build_retrieval_query(
+        self,
+        question: str,
+        conversation_history: list[dict] | None,
+    ) -> str:
+        """Build search query: current question, expanded with history when needed."""
+
+        if not conversation_history or not self._needs_context_expansion(
+            question
+        ):
+            return question
+
+        context_terms = self._extract_context_terms(
+            conversation_history
+        )
+
+        if not context_terms:
+            return question
+
+        return (
+            f"{question} "
+            f"{' '.join(sorted(context_terms))}"
+        ).strip()
+
+    def _chunk_fingerprint(
+        self,
+        text: str,
+    ) -> str:
+        """Content-based fingerprint for near-duplicate chunk detection."""
+
+        words = re.findall(
+            r"[a-zA-Z0-9_]+",
+            text.lower(),
+        )
+
+        content_words = sorted(
+            {
+                word
+                for word in words
+                if len(word) > 3
+            }
+        )[:40]
+
+        if content_words:
+            return " ".join(content_words)
+
+        return text[:250].strip().lower()
+
+    def _filter_sources_by_answer_usage(
+        self,
+        answer: str,
+        relevant_chunks: list[dict],
+        sources: list[dict],
+    ) -> list[dict]:
+        """Return deduplicated sources whose chunks overlap with the final answer."""
+
+        if not answer or not sources:
+            return sources
+
+        answer_terms = self._terms(answer)
+
+        if not answer_terms:
+            return sources
+
+        used_keys: set[tuple[str, str]] = set()
+
+        for row in relevant_chunks:
+            chunk_terms = self._terms(
+                row.get("text", "")
+            )
+
+            overlap = len(
+                answer_terms.intersection(chunk_terms)
+            )
+
+            overlap_ratio = overlap / max(
+                len(chunk_terms),
+                1,
+            )
+
+            if overlap >= 2 or overlap_ratio >= 0.12:
+                metadata = row.get("metadata", {})
+                filename = (
+                    metadata.get("filename")
+                    or metadata.get("file")
+                    or "Unknown Document"
+                )
+                page = str(metadata.get("page", "-"))
+                used_keys.add((filename, page))
+
+        if not used_keys:
+            return sources[:1]
+
+        filtered: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+
+        for source in sources:
+            key = (source["file"], source["page"])
+            if key in used_keys and key not in seen:
+                filtered.append(source)
+                seen.add(key)
+
+        return filtered
 
     # =========================================================
     # SELECT BEST CHUNKS
@@ -478,22 +694,13 @@ class RAGService:
             ):
                 continue
 
-            # Prevent semantic duplicates
-            fingerprint = (
-                text[:250]
-                .strip()
-                .lower()
-            )
+            # Prevent semantic duplicates (content fingerprint, not prefix-only)
+            fingerprint = self._chunk_fingerprint(text)
 
-            if (
-                fingerprint
-                in semantic_fingerprints
-            ):
+            if fingerprint in semantic_fingerprints:
                 continue
 
-            semantic_fingerprints.add(
-                fingerprint
-            )
+            semantic_fingerprints.add(fingerprint)
 
             relevant_chunks.append(
                 row
@@ -611,11 +818,15 @@ PAGE: {page}
         self,
         question: str,
         results: list[dict],
+        context_terms: set[str] | None = None,
     ) -> list[dict]:
 
-        question_terms = self._terms(
-            question
-        )
+        question_terms = self._terms(question)
+
+        if context_terms:
+            question_terms = question_terms.union(
+                context_terms
+            )
 
         ranked = []
 
@@ -652,6 +863,18 @@ PAGE: {page}
 
             )
 
+            context_overlap = 0.0
+
+            if context_terms:
+                context_overlap = (
+                    len(
+                        context_terms.intersection(
+                            text_terms
+                        )
+                    )
+                    / max(len(context_terms), 1)
+                )
+
             definition_bonus = (
                 0.10
                 if self._looks_like_definition(
@@ -676,8 +899,9 @@ PAGE: {page}
             final_score = min(
                 1.0,
                 (
-                    semantic_score * 0.55
-                    + overlap * 0.35
+                    semantic_score * 0.50
+                    + overlap * 0.30
+                    + context_overlap * 0.15
                     + definition_bonus
                     + exact_phrase_bonus
                 ),
@@ -811,29 +1035,25 @@ PAGE: {page}
         self,
         text: str,
     ) -> bool:
+        """Detect answers that look like unprocessed document excerpts."""
 
-        indicators = [
-
-            "chapter",
-
-            "figure",
-
-            "table",
-
-            "exercise",
-
-            "primitive data structures",
-
-            "linked lists are one",
-
-        ]
+        indicators = (
+            "chapter ",
+            "figure ",
+            "table of contents",
+            "see exercise",
+            "page ",
+            "section ",
+        )
 
         text_lower = text.lower()
 
-        return any(
-            item in text_lower
-            for item in indicators
+        # Multiple structural markers suggest a raw paste, not synthesis.
+        marker_count = sum(
+            1 for item in indicators if item in text_lower
         )
+
+        return marker_count >= 2
 
     def _is_garbage_text(
         self,
@@ -933,12 +1153,24 @@ PAGE: {page}
         self,
         question: str,
         answer: str,
+        conversation_history: list[dict] | None = None,
     ) -> bool:
 
         if not answer or self._is_not_found_response(answer):
             return False
 
         question_terms = self._terms(question)
+
+        # Follow-ups may omit explicit topic words; include recent context.
+        if (
+            self._needs_context_expansion(question)
+            and conversation_history
+        ):
+            question_terms = question_terms.union(
+                self._extract_context_terms(
+                    conversation_history
+                )
+            )
 
         if len(question_terms) < 2:
             return True

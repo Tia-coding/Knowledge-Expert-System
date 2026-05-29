@@ -832,13 +832,291 @@ ANSWER (start directly, no preamble):
 
         for header, body_lines in blocks:
             body = "\n".join(body_lines).strip()
-            if PromptEngineer._is_placeholder_content(body):
+            if (
+                PromptEngineer._is_placeholder_content(body)
+                or not body
+            ):
                 continue
-            output.append(f"{header}:\n{body}" if body else f"{header}:")
+            output.append(f"{header}:\n{body}")
 
         return "\n\n".join(
             block for block in output if block.strip()
         ).strip()
+
+    # Section titles that must not appear without body content
+    _SECTION_TITLES = {
+        "definition",
+        "key characteristics",
+        "example",
+        "applications",
+        "algorithm",
+        "steps",
+        "pseudo code",
+        "pseudocode",
+        "time complexity",
+        "space complexity",
+        "explanation",
+        "objective",
+        "important notes",
+        "notes",
+        "note",
+        "comparison table",
+        "summary",
+        "overview",
+        "approach",
+        "advantages",
+        "disadvantages",
+        "key points",
+        "section",
+        "context",
+        "reference",
+    }
+
+    @staticmethod
+    def _is_section_title_line(line: str) -> str | None:
+        stripped = line.strip()
+        if not stripped:
+            return None
+
+        colon_match = re.match(
+            r"^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$",
+            stripped,
+        )
+        if colon_match and len(colon_match.group(1)) <= 45:
+            title = colon_match.group(1).strip()
+            rest = colon_match.group(2).strip()
+            if rest:
+                return None
+            if title.lower() in PromptEngineer._SECTION_TITLES:
+                return title
+            return title
+
+        plain = stripped.rstrip(":").strip()
+        if plain.lower() in PromptEngineer._SECTION_TITLES:
+            return plain
+
+        return None
+
+    @staticmethod
+    def remove_filler_text(text: str) -> str:
+        """Strip transition fluff and meaningless standalone labels."""
+
+        if not text:
+            return text
+
+        filler_prefixes = (
+            r"to illustrate,?\s*",
+            r"however,?\s*",
+            r"additionally,?\s*",
+            r"consequently,?\s*",
+            r"nevertheless,?\s*",
+            r"based on (the )?(provided )?(document )?context,?\s*",
+            r"according to (the )?(uploaded )?documents?,?\s*",
+            r"from the (provided )?context,?\s*",
+        )
+
+        junk_lines = {
+            "section",
+            "context",
+            "reference",
+            "note",
+            "notes",
+        }
+
+        cleaned: list[str] = []
+
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                cleaned.append("")
+                continue
+
+            lower = stripped.lower().rstrip(":")
+
+            if lower in junk_lines:
+                continue
+
+            if PromptEngineer._is_section_title_line(stripped):
+                cleaned.append(stripped)
+                continue
+
+            updated = stripped
+            for pattern in filler_prefixes:
+                updated = re.sub(
+                    pattern,
+                    "",
+                    updated,
+                    flags=re.IGNORECASE,
+                ).strip()
+
+            if updated:
+                cleaned.append(updated)
+
+        return "\n".join(cleaned)
+
+    @staticmethod
+    def remove_standalone_empty_sections(text: str) -> str:
+        """Remove section headers not followed by substantive content."""
+
+        if not text:
+            return text
+
+        lines = text.split("\n")
+        output: list[str] = []
+        index = 0
+
+        while index < len(lines):
+            line = lines[index]
+            title = PromptEngineer._is_section_title_line(line)
+
+            if not title:
+                output.append(line)
+                index += 1
+                continue
+
+            body_lines: list[str] = []
+            cursor = index + 1
+
+            while cursor < len(lines):
+                peek = lines[cursor]
+                if not peek.strip():
+                    if body_lines:
+                        break
+                    cursor += 1
+                    continue
+
+                if PromptEngineer._is_section_title_line(peek):
+                    break
+
+                body_lines.append(peek)
+                cursor += 1
+
+            body = "\n".join(body_lines).strip()
+
+            if body and not PromptEngineer._is_placeholder_content(
+                body
+            ):
+                colon_match = re.match(
+                    r"^([A-Za-z][A-Za-z0-9 /&]+):\s*",
+                    line.strip(),
+                )
+                if colon_match:
+                    output.append(line)
+                else:
+                    output.append(f"{title}:")
+                output.extend(body_lines)
+                if cursor < len(lines) and not lines[cursor].strip():
+                    output.append("")
+
+            index = cursor
+
+        return "\n".join(output)
+
+    @staticmethod
+    def normalize_section_bullets(text: str) -> str:
+        """Ensure characteristic-style lines use bullet prefixes."""
+
+        if not text:
+            return text
+
+        bullet_sections = {
+            "key characteristics",
+            "advantages",
+            "disadvantages",
+            "key points",
+            "important notes",
+        }
+
+        lines = text.split("\n")
+        output: list[str] = []
+        current_section: str | None = None
+
+        for line in lines:
+            title = PromptEngineer._is_section_title_line(line)
+            if title:
+                current_section = title.lower()
+                output.append(line)
+                continue
+
+            stripped = line.strip()
+            if (
+                current_section in bullet_sections
+                and stripped
+                and not re.match(r"^(\d+\.|[-•*])\s+", stripped)
+                and not stripped.startswith("|")
+                and len(stripped.split()) <= 24
+            ):
+                output.append(f"- {stripped}")
+                continue
+
+            output.append(line)
+
+        return "\n".join(output)
+
+    @staticmethod
+    def renumber_ordered_steps(text: str) -> str:
+        """Renumber step lists after empty items were removed."""
+
+        if not text:
+            return text
+
+        lines = text.split("\n")
+        output: list[str] = []
+        counter = 0
+        in_steps = False
+
+        for line in lines:
+            title = PromptEngineer._is_section_title_line(line)
+            if title:
+                in_steps = title.lower() == "steps"
+                counter = 0
+                output.append(line)
+                continue
+
+            match = re.match(r"^\d+\.\s+(.+)$", line.strip())
+            if in_steps and match and match.group(1).strip():
+                counter += 1
+                output.append(f"{counter}. {match.group(1).strip()}")
+                continue
+
+            if match:
+                counter = 0
+
+            output.append(line)
+
+        return "\n".join(output)
+
+    @staticmethod
+    def polish_answer(text: str) -> str:
+        """Final presentation pass before the answer is shown to the user."""
+
+        if not text:
+            return text
+
+        text = PromptEngineer.strip_markdown(text)
+        text = PromptEngineer.remove_filler_text(text)
+        text = PromptEngineer.remove_standalone_empty_sections(text)
+        text = PromptEngineer.fix_incomplete_steps(text)
+        text = PromptEngineer.normalize_section_bullets(text)
+        text = PromptEngineer.remove_empty_sections(text)
+        text = PromptEngineer.renumber_ordered_steps(text)
+
+        # Collapse excessive blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        # Remove duplicate non-empty lines
+        seen: set[str] = set()
+        deduped: list[str] = []
+
+        for line in text.split("\n"):
+            key = line.strip().lower()
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            deduped.append(line)
+
+        return "\n".join(deduped).strip()
 
     @staticmethod
     def fix_incomplete_steps(text: str) -> str:
@@ -975,13 +1253,6 @@ ANSWER (start directly, no preamble):
             deduped_paragraphs
         ).strip()
 
-        response = PromptEngineer.fix_incomplete_steps(
-            response
-        )
-        response = PromptEngineer.remove_empty_sections(
-            response
-        )
-
         # Remove incomplete sentence endings
         response = re.sub(
             r"(and|or|because|since|therefore)\s*$",
@@ -1031,7 +1302,7 @@ ANSWER (start directly, no preamble):
         ):
             response += "."
 
-        return response.strip()
+        return PromptEngineer.polish_answer(response.strip())
 
     # =========================================================
     # NO ANSWER RESPONSE

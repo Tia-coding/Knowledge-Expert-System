@@ -276,6 +276,10 @@ class RAGService:
                 answer
             )
 
+            answer = PromptEngineer.polish_answer(
+                answer
+            )
+
             retrieval_confidence = (
                 self._compute_retrieval_confidence(
                     relevant_chunks

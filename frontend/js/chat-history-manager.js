@@ -510,22 +510,205 @@ function renderSourcesPanel(sourcesEl, sources) {
   });
 }
 
+const ANSWER_SECTION_TITLES = new Set([
+  "definition",
+  "key characteristics",
+  "example",
+  "applications",
+  "algorithm",
+  "steps",
+  "pseudo code",
+  "pseudocode",
+  "time complexity",
+  "space complexity",
+  "explanation",
+  "objective",
+  "important notes",
+  "notes",
+  "comparison table",
+  "summary",
+  "overview",
+  "approach",
+  "advantages",
+  "disadvantages",
+  "key points",
+]);
+
+const BULLET_SECTIONS = new Set([
+  "key characteristics",
+  "advantages",
+  "disadvantages",
+  "key points",
+  "important notes",
+  "notes",
+]);
+
+const FILLER_LINE_RE =
+  /^(to illustrate|however|additionally|consequently|nevertheless|based on (the )?(provided )?(document )?context|according to (the )?(uploaded )?documents?),?\s*/i;
+
+const JUNK_LINES = new Set(["section", "context", "reference", "note"]);
+
+function stripMarkdown(text) {
+  return String(text || "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "");
+}
+
+function parseSectionHeader(line) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const colon = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$/);
+  if (colon && colon[1].length <= 45) {
+    const title = colon[1].trim();
+    const rest = colon[2].trim();
+    return { title, rest, key: title.toLowerCase() };
+  }
+
+  const plain = trimmed.replace(/:$/, "").trim();
+  if (ANSWER_SECTION_TITLES.has(plain.toLowerCase())) {
+    return { title: plain, rest: "", key: plain.toLowerCase() };
+  }
+
+  return null;
+}
+
+function isPlaceholderContent(text) {
+  const normalized = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.,;:]+$/, "");
+
+  if (!normalized) {
+    return true;
+  }
+
+  const exact = new Set([
+    "n/a",
+    "na",
+    "none",
+    "not available",
+    "not specified",
+    "not specified in the documents",
+    "not mentioned",
+    "no information",
+    "-",
+    "...",
+  ]);
+
+  if (exact.has(normalized)) {
+    return true;
+  }
+
+  return (
+    normalized.startsWith("not specified") ||
+    normalized.startsWith("not available") ||
+    normalized.startsWith("no information")
+  );
+}
+
+function preprocessAnswerDisplay(text) {
+  const lines = stripMarkdown(text).split("\n");
+  const output = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    let line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      output.push("");
+      continue;
+    }
+
+    if (JUNK_LINES.has(trimmed.toLowerCase().replace(/:$/, ""))) {
+      continue;
+    }
+
+    const header = parseSectionHeader(trimmed);
+
+    if (header && header.rest) {
+      if (!isPlaceholderContent(header.rest)) {
+        output.push(`${header.title}:`);
+        output.push(header.rest);
+      }
+      continue;
+    }
+
+    if (header && !header.rest) {
+      const body = [];
+      let cursor = index + 1;
+
+      while (cursor < lines.length) {
+        const peek = lines[cursor].trim();
+        if (!peek) {
+          if (body.length) {
+            break;
+          }
+          cursor += 1;
+          continue;
+        }
+        if (parseSectionHeader(peek)) {
+          break;
+        }
+        body.push(lines[cursor]);
+        cursor += 1;
+      }
+
+      const bodyText = body.join("\n").trim();
+      if (bodyText && !isPlaceholderContent(bodyText)) {
+        output.push(`${header.title}:`);
+        output.push(bodyText);
+      }
+
+      index = cursor - 1;
+      continue;
+    }
+
+    const cleaned = trimmed.replace(FILLER_LINE_RE, "").trim();
+    if (cleaned) {
+      output.push(cleaned);
+    }
+  }
+
+  return output
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function shouldAutoBullet(sectionKey, line) {
+  if (!BULLET_SECTIONS.has(sectionKey)) {
+    return false;
+  }
+
+  if (/^(\d+\.|[-•*])\s+/.test(line)) {
+    return false;
+  }
+
+  if (line.includes("|") || line.length > 160) {
+    return false;
+  }
+
+  return line.split(/\s+/).length <= 28;
+}
+
 function renderFormattedAnswer(text) {
   if (!text) {
     return "";
   }
 
-  const normalized = String(text)
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1");
-
-  const lines = normalized.split("\n");
+  const lines = preprocessAnswerDisplay(text).split("\n");
   const parts = [];
   let listType = null;
   let tableRows = [];
   let pseudoLines = [];
   let inPseudoSection = false;
+  let currentSectionKey = "";
 
   function flushPseudoBlock() {
     if (!pseudoLines.length) {
@@ -533,7 +716,7 @@ function renderFormattedAnswer(text) {
       return;
     }
     parts.push(
-      `<pre class="answer-code"><code>${escapeHtml(pseudoLines.join("\n"))}</code></pre>`
+      `<pre class="answer-code"><code>${escapeHtml(pseudoLines.join("\n").trim())}</code></pre>`
     );
     pseudoLines = [];
     inPseudoSection = false;
@@ -584,27 +767,29 @@ function renderFormattedAnswer(text) {
     parts.push("</tbody></table></div>");
   }
 
+  function emitSectionHeading(title) {
+    closeList();
+    flushTable();
+    flushPseudoBlock();
+    currentSectionKey = title.toLowerCase();
+    inPseudoSection = /pseudo\s*code/i.test(title);
+    parts.push(`<h4 class="answer-heading">${escapeHtml(title)}</h4>`);
+  }
+
   lines.forEach(line => {
     const trimmed = line.trim();
 
     if (!trimmed) {
-      if (inPseudoSection) {
-        pseudoLines.push("");
-        return;
-      }
       closeList();
       flushTable();
-      flushPseudoBlock();
       return;
     }
 
     if (inPseudoSection) {
-      const nestedSection = trimmed.match(
-        /^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$/
-      );
-      if (nestedSection && nestedSection[1].length <= 45) {
+      const nested = parseSectionHeader(trimmed);
+      if (nested && !nested.rest) {
         flushPseudoBlock();
-      } else {
+      } else if (!nested) {
         pseudoLines.push(trimmed);
         return;
       }
@@ -623,61 +808,73 @@ function renderFormattedAnswer(text) {
       flushTable();
     }
 
-    const sectionMatch = trimmed.match(
-      /^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$/
-    );
-
-    if (sectionMatch && sectionMatch[1].length <= 45) {
-      closeList();
-      flushPseudoBlock();
-      const title = sectionMatch[1];
-      const rest = sectionMatch[2];
-      inPseudoSection = /pseudo\s*code/i.test(title);
-      parts.push(
-        `<h4 class="answer-heading">${escapeHtml(title)}</h4>`
-      );
-      if (rest) {
-        if (inPseudoSection) {
-          pseudoLines.push(rest);
-        } else {
-          parts.push(`<p class="answer-p">${escapeHtml(rest)}</p>`);
-        }
+    const section = parseSectionHeader(trimmed);
+    if (section && section.rest) {
+      emitSectionHeading(section.title);
+      if (inPseudoSection) {
+        pseudoLines.push(section.rest);
+      } else {
+        parts.push(`<p class="answer-p">${escapeHtml(section.rest)}</p>`);
       }
       return;
     }
 
+    if (section && !section.rest) {
+      emitSectionHeading(section.title);
+      return;
+    }
+
+    const plainSection = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&]+)$/);
+    if (
+      plainSection &&
+      ANSWER_SECTION_TITLES.has(plainSection[1].toLowerCase())
+    ) {
+      emitSectionHeading(plainSection[1]);
+      return;
+    }
+
     const numberedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
-    if (numberedMatch) {
+    if (numberedMatch && numberedMatch[2].trim()) {
       if (listType !== "ol") {
         closeList();
         parts.push('<ol class="answer-list answer-list-ordered">');
         listType = "ol";
       }
-      parts.push(`<li>${escapeHtml(numberedMatch[2])}</li>`);
+      parts.push(`<li>${escapeHtml(numberedMatch[2].trim())}</li>`);
       return;
     }
 
+    let bulletText = null;
     const bulletMatch = trimmed.match(/^[-•*]\s+(.+)$/);
     if (bulletMatch) {
+      bulletText = bulletMatch[1].trim();
+    } else if (shouldAutoBullet(currentSectionKey, trimmed)) {
+      bulletText = trimmed;
+    }
+
+    if (bulletText) {
       if (listType !== "ul") {
         closeList();
         parts.push('<ul class="answer-list">');
         listType = "ul";
       }
-      parts.push(`<li>${escapeHtml(bulletMatch[1])}</li>`);
+      parts.push(`<li>${escapeHtml(bulletText)}</li>`);
       return;
     }
 
     if (
-      /^(for|while|if|else|return|def |function |procedure |begin\b|end\b|loop\b)/i.test(
-        trimmed
-      ) ||
-      (trimmed.endsWith(";") && trimmed.length < 120)
+      inPseudoSection ||
+      /^(for|while|if|else|return|def |function |procedure )/i.test(trimmed) ||
+      (trimmed.endsWith(";") && trimmed.length < 140)
     ) {
       closeList();
-      parts.push(
-        `<pre class="answer-code"><code>${escapeHtml(trimmed)}</code></pre>`
-      );
+      if (inPseudoSection) {
+        pseudoLines.push(trimmed);
+      } else {
+        parts.push(
+          `<pre class="answer-code"><code>${escapeHtml(trimmed)}</code></pre>`
+        );
+      }
       return;
     }
 

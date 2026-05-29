@@ -25,13 +25,16 @@ class PromptEngineer:
 
     @staticmethod
     def detect_answer_type(question: str) -> str:
-        """Classify how the answer should be structured."""
+        """Classify answer structure: structured only when the question needs it."""
 
         q = question.lower().strip()
+        words = q.split()
 
+        # Explicit algorithm requests → structured
         if re.search(r"\balgorithm\b", q) or "pseudocode" in q:
             return "algorithm"
 
+        # Comparisons → table format
         if any(
             phrase in q
             for phrase in (
@@ -45,18 +48,7 @@ class PromptEngineer:
         ):
             return "comparison"
 
-        if any(
-            word in q
-            for word in ("advantage", "benefits", "pros", "merits")
-        ):
-            return "advantages"
-
-        if any(
-            word in q
-            for word in ("disadvantage", "drawbacks", "cons", "limitations")
-        ):
-            return "disadvantages"
-
+        # Clear procedures → structured steps
         if any(
             phrase in q
             for phrase in (
@@ -70,40 +62,16 @@ class PromptEngineer:
         ) or re.search(r"\bsteps\b", q):
             return "procedure"
 
-        if any(
-            word in q
-            for word in (
-                "implementation",
-                "implement",
-                "write code",
-                "program for",
-                "source code",
-            )
-        ):
-            return "implementation"
-
-        if any(
-            phrase in q
-            for phrase in (
-                "what is",
-                "what are",
-                "define",
-                "meaning of",
-                "explain what",
-            )
-        ):
-            return "definition"
-
-        if q.startswith("explain") or q.startswith("describe"):
-            return "explanation"
-
+        # List-style requests → light structure
         if any(
             word in q
             for word in ("list", "types of", "kinds of", "enumerate")
         ):
             return "list"
 
-        return "general"
+        # Everything else: natural conversational explanation
+        # (what is / explain / describe / follow-ups like "explain in detail")
+        return "conversational"
 
     @staticmethod
     def detect_question_type(question: str) -> str:
@@ -137,16 +105,31 @@ TUTORING & SYNTHESIS RULES:
         )
 
     @staticmethod
-    def formatting_rules() -> str:
+    def formatting_rules_conversational() -> str:
         return """
-FORMATTING (required):
-- Use plain text only. Do NOT use markdown: no **, no __, no #, no backticks.
-- Write section titles as "Section Name:" on their own line (no bold).
-- Omit any section entirely if the documents lack supporting information.
-- Never leave empty sections, placeholders, or lines like "N/A" or "Not specified".
-- Use numbered lists (1. 2. 3.) for steps; use hyphen bullets (- item) for characteristics.
-- Complete every numbered step with real content; never output blank step numbers.
+FORMATTING:
+- Use plain text only. No markdown (no **, __, #, backticks).
+- Write naturally in clear paragraphs like a knowledgeable tutor.
+- Do NOT use rigid templates (Definition / Key Characteristics / Applications / Example)
+  unless a short heading genuinely improves readability.
+- Answer the question directly first, then expand with useful detail.
+- Use bullets or short headings only when they help; most answers should be prose.
+- Never leave empty sections or placeholder labels.
 """
+
+    @staticmethod
+    def formatting_rules_structured() -> str:
+        return """
+FORMATTING:
+- Use plain text only. No markdown.
+- Use the section labels specified below; omit any section with no real content.
+- Never output empty sections or placeholders like "N/A" or "Not specified".
+- Numbered steps must be complete (no blank "1." lines).
+"""
+
+    @staticmethod
+    def formatting_rules() -> str:
+        return PromptEngineer.formatting_rules_conversational()
 
     # =========================================================
     # COMMON RULES
@@ -235,7 +218,13 @@ FORMATTING (required):
         return "\n\n".join(sections)
 
     @staticmethod
-    def common_rules() -> str:
+    def common_rules(conversational: bool = True) -> str:
+
+        formatting = (
+            PromptEngineer.formatting_rules_conversational()
+            if conversational
+            else PromptEngineer.formatting_rules_structured()
+        )
 
         return f"""
 IMPORTANT RULES:
@@ -246,20 +235,21 @@ IMPORTANT RULES:
 4. Start immediately with the answer — no preamble or meta commentary.
 5. Do not mention documents, files, context, rewriting, or synthesis.
 6. Preserve technical accuracy; use simple language where possible.
-7. For follow-up questions, resolve pronouns using recent conversation.
-8. If context is thin, give the best grounded summary you can without guessing.
+7. For follow-up questions, continue the same topic from recent conversation.
+8. If the user asks to elaborate (e.g. "explain in detail"), expand the prior topic — do not treat it as a new unrelated question.
+9. If context is thin, give the best grounded summary you can without guessing.
 
-{PromptEngineer.formatting_rules()}
+{formatting}
 
 {PromptEngineer.anti_copy_rules()}
 """
 
     # =========================================================
-    # DEFINITION PROMPT
+    # CONVERSATIONAL PROMPT (default for most questions)
     # =========================================================
 
     @staticmethod
-    def build_definition_prompt(
+    def build_conversational_prompt(
         question: str,
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
@@ -267,35 +257,48 @@ IMPORTANT RULES:
 
         context = "\n\n".join(context_blocks)
 
+        follow_up_note = ""
+        if conversation_history and len(conversation_history) >= 2:
+            follow_up_note = (
+                "\nThis may be a follow-up — use the recent conversation to "
+                "identify the topic and expand naturally on what was already said.\n"
+            )
+
         base = f"""
-You are an academic tutor.
+You are a knowledgeable tutor helping a student understand material from their course documents.
 
-{PromptEngineer.common_rules()}
+{PromptEngineer.common_rules(conversational=True)}
+{follow_up_note}
 
-FORMAT — include ONLY sections supported by the documents:
-
-Definition:
-(One clear sentence in your own words.)
-
-Key Characteristics:
-(- bullet per characteristic)
-
-Example:
-(Only if the documents provide an example.)
-
-Applications:
-(Only if the documents mention real uses.)
+STYLE:
+- Write a clear, natural explanation in your own words (2-4 short paragraphs).
+- Sound like ChatGPT: direct, educational, conversational — not a rigid worksheet.
+- Do NOT force labels such as Definition, Key Characteristics, Example, or Applications.
+- You may use a brief heading or bullets only if it genuinely helps clarity.
+- For "explain in detail" or similar follow-ups, deepen the previous answer on the same topic.
 
 DOCUMENT CONTEXT:
 {context}
 
-Write the formatted answer now:
+Write your answer now (start directly, no preamble):
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
             base,
             context_blocks,
             question,
+            conversation_history,
+        )
+
+    @staticmethod
+    def build_definition_prompt(
+        question: str,
+        context_blocks: List[str],
+        conversation_history: Optional[List[dict]] = None,
+    ) -> str:
+        return PromptEngineer.build_conversational_prompt(
+            question,
+            context_blocks,
             conversation_history,
         )
 
@@ -315,7 +318,7 @@ Write the formatted answer now:
         base = f"""
 You are an academic tutor explaining a procedure.
 
-{PromptEngineer.common_rules()}
+{PromptEngineer.common_rules(conversational=False)}
 
 FORMAT — include ONLY sections supported by the documents:
 
@@ -370,7 +373,7 @@ Write the formatted answer now:
         base = f"""
 You are an academic tutor explaining an algorithm from the documents.
 
-{PromptEngineer.common_rules()}
+{PromptEngineer.common_rules(conversational=False)}
 
 FORMAT — include ONLY sections supported by the documents:
 
@@ -425,7 +428,7 @@ You are an advanced AI assistant.
 
 The user is asking for a structured list response.
 
-{PromptEngineer.common_rules()}
+{PromptEngineer.common_rules(conversational=True)}
 
 SPECIAL INSTRUCTIONS:
 
@@ -462,7 +465,7 @@ ANSWER (start directly, no preamble):
         base = f"""
 You are an academic tutor comparing concepts.
 
-{PromptEngineer.common_rules()}
+{PromptEngineer.common_rules(conversational=False)}
 
 FORMAT:
 
@@ -502,7 +505,7 @@ Write the formatted answer now:
         base = f"""
 You are an academic tutor explaining an implementation.
 
-{PromptEngineer.common_rules()}
+{PromptEngineer.common_rules(conversational=True)}
 
 FORMAT:
 
@@ -534,32 +537,9 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
-        context = "\n\n".join(context_blocks)
-
-        base = f"""
-You are an academic tutor giving a clear explanation.
-
-{PromptEngineer.common_rules()}
-
-FORMAT:
-
-Explanation:
-(2-3 short paragraphs in your own words.)
-
-Key Points:
-- (3-5 concise bullets)
-
-DOCUMENT CONTEXT:
-{context}
-
-Write the formatted answer now:
-""".strip()
-
-        return PromptEngineer._append_prompt_sections(
-            base,
-            context_blocks,
+        return PromptEngineer.build_conversational_prompt(
             question,
+            context_blocks,
             conversation_history,
         )
 
@@ -569,32 +549,9 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
-        context = "\n\n".join(context_blocks)
-
-        base = f"""
-You are an academic tutor.
-
-{PromptEngineer.common_rules()}
-
-FORMAT:
-
-Advantages:
-- (Concise bullets in your own words)
-
-Summary:
-(One short closing sentence.)
-
-DOCUMENT CONTEXT:
-{context}
-
-Write the formatted answer now:
-""".strip()
-
-        return PromptEngineer._append_prompt_sections(
-            base,
-            context_blocks,
+        return PromptEngineer.build_conversational_prompt(
             question,
+            context_blocks,
             conversation_history,
         )
 
@@ -604,32 +561,9 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
-        context = "\n\n".join(context_blocks)
-
-        base = f"""
-You are an academic tutor.
-
-{PromptEngineer.common_rules()}
-
-FORMAT:
-
-Disadvantages:
-- (Concise bullets in your own words)
-
-Summary:
-(One short closing sentence.)
-
-DOCUMENT CONTEXT:
-{context}
-
-Write the formatted answer now:
-""".strip()
-
-        return PromptEngineer._append_prompt_sections(
-            base,
-            context_blocks,
+        return PromptEngineer.build_conversational_prompt(
             question,
+            context_blocks,
             conversation_history,
         )
 
@@ -655,29 +589,9 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
-        context = "\n\n".join(context_blocks)
-
-        base = f"""
-You are an advanced AI knowledge assistant.
-
-{PromptEngineer.common_rules()}
-
-SPECIAL INSTRUCTIONS:
-
-- Answer naturally and professionally in 1-3 short paragraphs.
-- Be direct and easy to read.
-
-DOCUMENT CONTEXT:
-{context}
-
-ANSWER (start directly, no preamble):
-""".strip()
-
-        return PromptEngineer._append_prompt_sections(
-            base,
-            context_blocks,
+        return PromptEngineer.build_conversational_prompt(
             question,
+            context_blocks,
             conversation_history,
         )
 
@@ -704,16 +618,18 @@ ANSWER (start directly, no preamble):
         answer_type = PromptEngineer.detect_answer_type(question)
 
         builders = {
-            "definition": PromptEngineer.build_definition_prompt,
+            "conversational": PromptEngineer.build_conversational_prompt,
             "algorithm": PromptEngineer.build_algorithm_prompt,
             "procedure": PromptEngineer.build_procedure_prompt,
             "comparison": PromptEngineer.build_comparison_prompt,
-            "advantages": PromptEngineer.build_advantages_prompt,
-            "disadvantages": PromptEngineer.build_disadvantages_prompt,
-            "implementation": PromptEngineer.build_implementation_prompt,
-            "explanation": PromptEngineer.build_explanation_prompt,
             "list": PromptEngineer.build_list_prompt,
-            "general": PromptEngineer.build_general_prompt,
+            # Legacy aliases → conversational
+            "definition": PromptEngineer.build_conversational_prompt,
+            "explanation": PromptEngineer.build_conversational_prompt,
+            "general": PromptEngineer.build_conversational_prompt,
+            "advantages": PromptEngineer.build_conversational_prompt,
+            "disadvantages": PromptEngineer.build_conversational_prompt,
+            "implementation": PromptEngineer.build_conversational_prompt,
         }
 
         builder = builders.get(
@@ -1087,6 +1003,50 @@ ANSWER (start directly, no preamble):
         return "\n".join(output)
 
     @staticmethod
+    def flatten_rigid_template_headers(text: str) -> str:
+        """Turn worksheet-style headers into plain prose for conversational answers."""
+
+        if not text:
+            return text
+
+        if re.search(
+            r"(?im)^(algorithm|steps|comparison table|objective|procedure)\s*:",
+            text,
+        ):
+            return text
+
+        rigid = {
+            "definition",
+            "key characteristics",
+            "example",
+            "applications",
+            "key points",
+            "overview",
+        }
+
+        lines = text.split("\n")
+        output: list[str] = []
+
+        for line in lines:
+            match = re.match(
+                r"^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$",
+                line.strip(),
+            )
+            if match and match.group(1).strip().lower() in rigid:
+                rest = match.group(2).strip()
+                if rest:
+                    output.append(rest)
+                continue
+
+            plain = line.strip().rstrip(":")
+            if plain.lower() in rigid:
+                continue
+
+            output.append(line)
+
+        return "\n".join(output)
+
+    @staticmethod
     def polish_answer(text: str) -> str:
         """Final presentation pass before the answer is shown to the user."""
 
@@ -1094,6 +1054,7 @@ ANSWER (start directly, no preamble):
             return text
 
         text = PromptEngineer.strip_markdown(text)
+        text = PromptEngineer.flatten_rigid_template_headers(text)
         text = PromptEngineer.remove_filler_text(text)
         text = PromptEngineer.remove_standalone_empty_sections(text)
         text = PromptEngineer.fix_incomplete_steps(text)
@@ -1408,13 +1369,8 @@ ANSWER (start directly, no preamble):
             return "Provide a complete, focused answer."
 
         return (
-            "Structure the answer as 2-3 "
-            "coherent paragraphs with natural "
-            "transitions. Each paragraph should "
-            "explore a distinct aspect while "
-            "maintaining overall topic focus. "
-            "Use transitional phrases to connect "
-            "ideas naturally."
+            "Write 2-4 flowing paragraphs. "
+            "Stay on one topic; connect ideas naturally without rigid section labels."
         )
 
     @staticmethod
@@ -1430,7 +1386,9 @@ ANSWER (start directly, no preamble):
 
         return (
             "This is a follow-up question. "
-            "Resolve pronouns and references (e.g. 'them', 'it', 'both') "
+            "Resolve pronouns and references (e.g. 'them', 'it', 'both', 'in detail') "
             "using the recent conversation. "
-            "Build on prior answers without repeating information already covered."
+            "If the user asks to elaborate or explain in detail, expand the SAME topic "
+            "from the previous turn — do not switch topics or say information was not found. "
+            "Build on prior answers without repeating verbatim."
         )

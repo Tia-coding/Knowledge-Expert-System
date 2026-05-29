@@ -131,6 +131,7 @@ class RAGService:
             if not self._is_retrieval_relevant(
                 question,
                 ranked_results,
+                conversation_history,
             ):
                 return {
                     "answer": NOT_FOUND,
@@ -152,10 +153,6 @@ class RAGService:
                     "sources": [],
                     "confidence": 0.0,
                 }
-
-             # =====================================================
-             # BUILD CONTEXT
-             # =====================================================
 
             context_blocks, sources = (
                 self._build_context(
@@ -272,9 +269,14 @@ class RAGService:
                 question,
             )
 
-            answer = self._enhance_answer_coherence(
-                answer
-            )
+            # Only add paragraph transitions for structured (algorithm/procedure) answers.
+            if re.search(
+                r"(?im)^(algorithm|steps|comparison table|objective)\s*:",
+                answer,
+            ):
+                answer = self._enhance_answer_coherence(
+                    answer
+                )
 
             answer = PromptEngineer.polish_answer(
                 answer
@@ -448,6 +450,7 @@ class RAGService:
             if not self._is_retrieval_relevant(
                 question,
                 ranked_results,
+                conversation_history,
             ):
                 yield NOT_FOUND
                 return
@@ -534,9 +537,18 @@ class RAGService:
             "tell me more",
             "explain more",
             "explain further",
+            "explain in detail",
+            "in detail",
+            "more detail",
+            "elaborate",
+            "go deeper",
+            "expand on",
             "what about",
             "how about",
         )
+
+        if q.startswith("explain") and len(words) <= 6:
+            return True
 
         if has_pronoun or any(
             phrase in q for phrase in comparison_phrases
@@ -1320,6 +1332,7 @@ PAGE: {page}
         self,
         question: str,
         ranked_results: list[dict],
+        conversation_history: list[dict] | None = None,
     ) -> bool:
 
         if not ranked_results:
@@ -1330,12 +1343,34 @@ PAGE: {page}
             top.get("final_score", 0.0)
         )
 
+        # Follow-ups like "explain in detail" rely on history for topic terms.
+        if (
+            conversation_history
+            and self._needs_context_expansion(question)
+            and top_score >= 0.36
+        ):
+            return True
+
         if top_score < MIN_TOP_RELEVANCE_SCORE:
             return False
 
+        overlap_question = question
+        if (
+            conversation_history
+            and self._needs_context_expansion(question)
+        ):
+            context_terms = self._extract_context_terms(
+                conversation_history,
+                question,
+            )
+            if context_terms:
+                overlap_question = (
+                    f"{question} {' '.join(sorted(context_terms))}"
+                )
+
         overlaps = [
             self._term_overlap_ratio(
-                question,
+                overlap_question,
                 row.get("text", ""),
             )
             for row in ranked_results[:4]
@@ -1382,9 +1417,27 @@ PAGE: {page}
         if not answer or self._is_not_found_response(answer):
             return False
 
+        # Conversational follow-ups: accept substantive answers on the thread topic.
+        if (
+            conversation_history
+            and self._needs_context_expansion(question)
+            and len(answer.split()) >= 20
+        ):
+            context_terms = self._extract_context_terms(
+                conversation_history,
+                question,
+            )
+            if context_terms:
+                answer_lower = answer.lower()
+                if any(
+                    term in answer_lower
+                    for term in context_terms
+                ):
+                    return True
+            return len(answer.split()) >= 35
+
         question_terms = self._terms(question)
 
-        # Follow-ups may omit explicit topic words; include recent context.
         if (
             self._needs_context_expansion(question)
             and conversation_history

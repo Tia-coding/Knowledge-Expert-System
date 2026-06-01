@@ -1,16 +1,3 @@
-"""
-Advanced prompt engineering for multimodal RAG system.
-
-Optimized for:
-- Human-like answers
-- Technical correctness
-- Multi-document summarization
-- OCR cleanup
-- Scanned PDFs
-- Tables and algorithms
-- Educational explanations
-- Concise professional responses
-"""
 
 from typing import List, Optional
 import re
@@ -83,6 +70,7 @@ class PromptEngineer:
         return """
 DOCUMENT GROUNDING:
 - Use ONLY the provided document context. Never invent facts.
+- Do not add background knowledge that is not supported by the context blocks.
 - Synthesize across multiple context blocks when they support the same topic.
 - If several passages are relevant, combine them into one coherent explanation.
 - If information is partial, state limitations briefly then give the best grounded summary.
@@ -90,6 +78,9 @@ DOCUMENT GROUNDING:
   do not contain enough information — do not guess.
 - The CURRENT QUESTION always has highest priority; conversation history clarifies
   follow-ups but must not override what the user is asking now.
+- Be careful with capability and performance claims such as direct access,
+  random access, bidirectional traversal, arbitrary-position updates, or
+  Big-O complexity. Include them only when the context explicitly supports them.
 """
 
     @staticmethod
@@ -101,15 +92,16 @@ TUTORING & SYNTHESIS RULES:
 - Write like a professor or tutor — not a PDF dump.
 - Answer ONLY the topic in the current question; skip off-topic context blocks.
 - Use examples only when they appear in the documents and help understanding.
+- Do not treat a related term as equivalent to the requested term unless the
+  context explicitly says they are the same.
 """
 
     @staticmethod
     def low_confidence_preamble(level: str = "limited") -> str:
         if level == "insufficient":
             return (
-                "The uploaded documents do not contain enough information "
-                "to answer this question.\n\n"
-                "Here is the best grounded summary from what is available:\n\n"
+                "I could not find sufficient information about this topic "
+                "in the uploaded documents."
             )
         return (
             "Based on the uploaded documents, the available information "
@@ -248,7 +240,7 @@ FORMATTING:
 IMPORTANT RULES:
 
 1. Start immediately with the answer — no preamble.
-2. Do not mention documents, files, context, or synthesis.
+2. Do not mention files, context, or synthesis unless saying the evidence is insufficient.
 3. Ignore corrupted OCR text.
 4. Preserve technical accuracy; use clear educational language.
 5. For follow-ups, use conversation history to resolve pronouns and topics.
@@ -285,17 +277,42 @@ IMPORTANT RULES:
             )
 
         base = f"""
-You are a knowledgeable tutor. Explain concepts naturally from the course documents.
-
+You are a document-grounded academic assistant. Answer questions clearly and naturally using the provided documents.
 {PromptEngineer.common_rules(conversational=True)}
 {follow_up_note}
 
 STYLE:
-- Write 2-5 clear paragraphs in your own words — like ChatGPT or a professor.
-- Do NOT use rigid templates (Definition / Key Characteristics / Applications / Example).
-- Do NOT force section headings unless they genuinely help.
-- Combine evidence from all relevant context blocks into one coherent explanation.
-- Answer the current question directly, then add useful depth.
+- Answer according to the user's question.
+- Start directly with the answer.
+- Be concise for simple questions.
+- Be detailed only when the question requires detail.
+- Use a natural academic writing style.
+- Avoid unnecessary introductions, analogies, storytelling, or filler text.
+- Focus on the most relevant information first.
+- Expand only when it improves understanding.
+- For 'what is' questions: give a clear definition followed by explanation.
+- For 'what is' questions: define the exact requested term first; avoid drifting
+  into related concepts unless they clarify that term.
+- For 'types of' questions: list only types explicitly supported by the context;
+  do not infer extra types from implementation details.
+- For 'explain in detail' questions: provide a significantly more detailed explanation than the previous answer.
+- Use multiple paragraphs when useful.
+- Explain concepts, characteristics, uses, and related ideas when supported by the documents.
+- Never generate meta-statements such as:
+  "Here is a structured response",
+  "Based on the context",
+  "The current question controls what to deliver",
+  or similar system-style text.
+
+
+
+ANSWER LENGTH:
+
+- Simple factual questions: short and direct.
+- Conceptual questions: moderately detailed.
+- "Explain in detail" questions: comprehensive explanation.
+- Let the complexity of the question determine the answer length.
+
 
 DOCUMENT CONTEXT:
 {context}
@@ -340,21 +357,16 @@ You are an academic tutor explaining a procedure.
 
 {PromptEngineer.common_rules(conversational=False)}
 
-FORMAT — include ONLY sections supported by the documents:
+Provide a brief explanation.
 
-Objective:
-(One sentence goal.)
+If the documents contain steps,
+present them as a numbered list.
 
-Steps:
-1. (First step in your own words)
-2. (Continue with complete steps only)
-...
+Include notes only when useful.
 
-Important Notes:
-(Optional caveats if in context.)
+Do not create Objective, Example, Notes, or any section that has no content.
 
-Example:
-(Optional walkthrough if in context.)
+Answer naturally.
 
 DOCUMENT CONTEXT:
 {context}
@@ -395,30 +407,26 @@ You are an academic tutor explaining an algorithm from the documents.
 
 {PromptEngineer.common_rules(conversational=False)}
 
-FORMAT — include ONLY sections supported by the documents:
+FORMAT:
 
-Algorithm:
-(Name of the algorithm)
+Start with a short explanation of the algorithm.
 
-Description:
-(Brief overview in your own words.)
+Then provide numbered steps only if the algorithm steps are clearly present in the documents.
 
-Steps:
-1. (Complete first step)
-2. (Complete second step)
-(Continue numbering; every step must have content.)
+Include Time Complexity and Space Complexity only when available.
 
-Pseudo Code:
-(Only if pseudocode or code appears in the documents.)
+Do NOT create sections that have no content.
 
-Time Complexity:
-(Only if stated in the documents.)
+Do NOT generate:
+- Pseudo Code
+- Description
+- Explanation
+- Not Applicable
+- N/A
 
-Space Complexity:
-(Only if stated in the documents.)
+if those details are not present.
 
-Explanation:
-(Short intuitive summary in your own words.)
+The answer should read naturally like a tutor explaining an algorithm.
 
 DOCUMENT CONTEXT:
 {context}
@@ -492,9 +500,9 @@ You are an academic tutor comparing concepts.
 
 FORMAT:
 
-Comparison Table:
-| Feature | Item A | Item B |
-(3-6 rows; use real names from the question instead of Item A/B when possible)
+Compare the concepts using short paragraphs or bullet points.
+
+Use tables only when the source documents already contain tabular comparisons.
 
 Summary:
 (2-3 sentences in your own words.)
@@ -844,9 +852,6 @@ Write the formatted answer now:
             return text
 
         filler_prefixes = (
-            r"to illustrate,?\s*",
-            r"however,?\s*",
-            r"additionally,?\s*",
             r"consequently,?\s*",
             r"nevertheless,?\s*",
             r"historically speaking,?\s*",
@@ -1089,7 +1094,7 @@ Write the formatted answer now:
         text = PromptEngineer.remove_filler_text(text)
         text = PromptEngineer.remove_standalone_empty_sections(text)
         text = PromptEngineer.fix_incomplete_steps(text)
-        text = PromptEngineer.normalize_section_bullets(text)
+        # text = PromptEngineer.normalize_section_bullets(text)
         text = PromptEngineer.remove_empty_sections(text)
         text = PromptEngineer.renumber_ordered_steps(text)
 
@@ -1282,10 +1287,10 @@ Write the formatted answer now:
             )
         )
 
-        if not has_sections:
-            paragraphs = response.split("\n\n")
-            if len(paragraphs) > 6:
-                response = "\n\n".join(paragraphs[:6])
+        # if not has_sections:
+        #     paragraphs = response.split("\n\n")
+        #     if len(paragraphs) > 6:
+        #         response = "\n\n".join(paragraphs[:6])
 
         if (
             response
@@ -1306,8 +1311,7 @@ Write the formatted answer now:
     ) -> str:
 
         return (
-            "This question does not appear to be covered in the "
-            "uploaded documents."
+            "I could not find sufficient information about this topic in the uploaded documents."
         )
 
     @staticmethod
@@ -1416,9 +1420,6 @@ Write the formatted answer now:
             return ""
 
         return (
-            "This is a follow-up. Resolve pronouns ('them', 'it', 'both') and "
-            "vague requests ('explain in detail', 'elaborate') using recent conversation. "
-            "The current question still controls what to deliver. "
-            "Never respond that information was not found if the topic was already discussed "
-            "and document context is available — expand instead."
+        "This is a follow-up question. Use recent conversation to understand "
+        "what topic the user is referring to and expand the explanation naturally."
         )

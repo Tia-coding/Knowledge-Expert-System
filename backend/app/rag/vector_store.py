@@ -148,8 +148,8 @@ class VectorStore:
         result = self.collection.query(
             query_embeddings=[embedding],
             n_results=max(
-                top_k * 8,
-                30,
+                top_k * 12,
+                50,
             ),
             include=[
                 "documents",
@@ -180,7 +180,7 @@ class VectorStore:
             if self._is_noisy_text(clean_text):
                 continue
 
-            text_key = clean_text[:250].lower().strip()
+            text_key = clean_text[:500].lower().strip()
 
             if text_key in seen_texts:
                 continue
@@ -203,6 +203,10 @@ class VectorStore:
                     semantic_score,
                     3,
                 ),
+                "distance": round(
+                    float(distance),
+                    4,
+                ),
             })
 
         rows = sorted(
@@ -211,7 +215,7 @@ class VectorStore:
             reverse=True,
         )
 
-        return rows[:top_k]
+        return rows[: max(top_k * 2, 20)]
 
     # =========================================================
     # DOCUMENT SNIPPETS

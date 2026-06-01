@@ -70,6 +70,22 @@ def clean_text(text: str) -> str:
 
     text = text.replace("\x00", " ")
 
+    # Repair common PDF ligature extraction losses before filtering.
+    ligature_repairs = {
+        r"\brst\b": "first",
+        r"\bde\s+ned\b": "defined",
+        r"\bde\s+ning\b": "defining",
+        r"\becient\b": "efficient",
+        r"\beciency\b": "efficiency",
+        r"\bdierent\b": "different",
+        r"\bdierence\b": "difference",
+        r"\bspecied\b": "specified",
+        r"\bbriey\b": "briefly",
+    }
+
+    for pattern, repaired in ligature_repairs.items():
+        text = re.sub(pattern, repaired, text)
+
     # Fix OCR hyphen line breaks
     text = re.sub(
         r"(\w)-\n(\w)",
@@ -153,8 +169,14 @@ def clean_text(text: str) -> str:
     )
 
     text = re.sub(
-        r"\s+",
-        " ",
+        r"[ \t]*\n[ \t]*",
+        "\n",
+        text,
+    )
+
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
         text,
     )
 
@@ -197,7 +219,6 @@ def is_meaningful_text(text: str) -> bool:
         return False
 
     garbage_patterns = [
-        r"[A-Z]{1,2}[a-z]{0,1}[A-Z]{1,2}",
         r"[_]{2,}",
         r"[^\s]{35,}",
     ]
@@ -389,75 +410,163 @@ def extract_pdf_text(
     table_count = 0
 
     try:
-
         import fitz
+    except ImportError:
+        fitz = None
 
-        pdf = fitz.open(path)
+    if fitz is not None:
 
-        for page_num, page in enumerate(
-            pdf,
-            start=1,
-        ):
+        try:
 
-            text = (
-                page.get_text("text")
-                or ""
-            )
+            pdf = fitz.open(path)
 
-            text = clean_text(text)
+            for page_num, page in enumerate(
+                pdf,
+                start=1,
+            ):
 
-            # OCR support for image-heavy PDFs
-            if not is_meaningful_text(text):
+                text = (
+                    page.get_text("text")
+                    or ""
+                )
 
-                try:
+                text = clean_text(text)
 
-                    pix = page.get_pixmap(
-                        dpi=300
-                    )
+                # OCR support for image-heavy PDFs
+                if not is_meaningful_text(text):
 
-                    import PIL.Image
-                    import io
+                    try:
 
-                    image = PIL.Image.open(
-                        io.BytesIO(
-                            pix.tobytes("png")
+                        pix = page.get_pixmap(
+                            dpi=300
                         )
-                    )
 
-                    ocr_text = (
-                        pytesseract.image_to_string(
-                            image
+                        import PIL.Image
+                        import io
+
+                        image = PIL.Image.open(
+                            io.BytesIO(
+                                pix.tobytes("png")
+                            )
                         )
-                    )
 
-                    ocr_text = clean_text(
-                        ocr_text
-                    )
+                        ocr_text = (
+                            pytesseract.image_to_string(
+                                image
+                            )
+                        )
 
-                    if (
-                        is_meaningful_text(
+                        ocr_text = clean_text(
                             ocr_text
                         )
-                    ):
 
-                        text = ocr_text
+                        if (
+                            is_meaningful_text(
+                                ocr_text
+                            )
+                        ):
 
-                except Exception:
-                    pass
+                            text = ocr_text
 
-            pages.append(
-                (
-                    page_num,
-                    text,
+                    except Exception:
+                        pass
+
+                pages.append(
+                    (
+                        page_num,
+                        text,
+                    )
                 )
+
+            pdf.close()
+
+        except Exception:
+
+            logger.exception(
+                "PyMuPDF extraction failed for %s; trying pdfplumber/PyPDF2 fallback.",
+                path,
             )
 
-        pdf.close()
+    if pages:
+        return pages, table_count
+
+    try:
+
+        import pdfplumber
+
+        with pdfplumber.open(path) as pdf:
+
+            for page_num, page in enumerate(
+                pdf.pages,
+                start=1,
+            ):
+
+                text = clean_text(
+                    page.extract_text() or ""
+                )
+
+                try:
+                    tables = page.extract_tables() or []
+                except Exception:
+                    tables = []
+
+                table_lines = []
+                for table in tables:
+                    table_count += 1
+                    for row in table:
+                        cells = [
+                            clean_text(cell or "")
+                            for cell in row
+                        ]
+                        table_lines.append(
+                            " | ".join(cells)
+                        )
+
+                if table_lines:
+                    text = (
+                        text
+                        + "\n\n[TABLE]\n"
+                        + "\n".join(table_lines)
+                    ).strip()
+
+                pages.append(
+                    (
+                        page_num,
+                        text,
+                    )
+                )
 
     except Exception:
 
         logger.exception(
-            "PyMuPDF extraction failed for %s",
+            "pdfplumber extraction failed for %s; trying PyPDF2 fallback.",
+            path,
+        )
+
+    if pages:
+        return pages, table_count
+
+    try:
+
+        from PyPDF2 import PdfReader
+
+        reader = PdfReader(str(path))
+
+        for page_num, page in enumerate(
+            reader.pages,
+            start=1,
+        ):
+            pages.append(
+                (
+                    page_num,
+                    clean_text(page.extract_text() or ""),
+                )
+            )
+
+    except Exception:
+
+        logger.exception(
+            "PyPDF2 extraction failed for %s",
             path,
         )
 
@@ -594,7 +703,7 @@ def deduplicate_chunks(
     for chunk in chunks:
 
         key = (
-            chunk.text[:300]
+            chunk.text[:500]
             .strip()
             .lower()
         )
@@ -607,6 +716,32 @@ def deduplicate_chunks(
         unique.append(chunk)
 
     return unique
+
+
+def classify_chunk_kind(text: str) -> str:
+    """Lightweight retrieval hint stored with metadata for future ingests."""
+
+    lowered = text.lower()
+
+    if re.search(
+        r"\b(difference between|compare|comparison|versus|whereas)\b",
+        lowered,
+    ):
+        return "comparison"
+
+    if re.search(
+        r"\b(types of|kinds of|classified into|classification of)\b",
+        lowered,
+    ):
+        return "type_list"
+
+    if re.search(
+        r"\b(refers to|defined as|is a|is an|is the)\b",
+        lowered,
+    ):
+        return "definition"
+
+    return "general"
 
 
 # =========================================================
@@ -656,8 +791,8 @@ def extract_document(
 
     splitter = (
         RecursiveCharacterTextSplitter(
-            chunk_size=900,
-            chunk_overlap=120,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
             separators=[
                 "\n# ",
                 "\n## ",
@@ -713,7 +848,7 @@ def extract_document(
 
             if (
                 len(cleaned.strip())
-                < 120
+                < 80
             ):
                 continue
 
@@ -742,6 +877,9 @@ def extract_document(
                         ),
                         "document_type": (
                             document_type
+                        ),
+                        "chunk_kind": classify_chunk_kind(
+                            cleaned
                         ),
                     },
                 )

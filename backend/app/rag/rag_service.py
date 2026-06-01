@@ -15,13 +15,13 @@ from app.rag.coherence_analyzer import CoherenceAnalyzer
 logger = logging.getLogger(__name__)
 
 NOT_FOUND = (
-    "This question does not appear to be covered in the "
-    "uploaded documents."
+    "I could not find sufficient information about this topic "
+    "in the uploaded documents."
 )
 
 NOT_FOUND_INSUFFICIENT = (
-    "The uploaded documents do not contain enough "
-    "information to answer this question."
+    "I could not find sufficient information about this topic "
+    "in the uploaded documents."
 )
 
 # Minimum retrieval quality before the LLM is invoked
@@ -133,6 +133,12 @@ class RAGService:
                 )
             )
 
+            self._log_retrieval_diagnostics(
+                question,
+                ranked_results[:8],
+                label="ranked",
+            )
+
             if not self._is_retrieval_relevant(
                 question,
                 ranked_results,
@@ -164,6 +170,28 @@ class RAGService:
                     relevant_chunks
                 )
             )
+
+            retrieval_confidence = (
+                self._compute_retrieval_confidence(
+                    relevant_chunks
+                )
+            )
+
+            self._log_retrieval_diagnostics(
+                question,
+                relevant_chunks,
+                label="selected",
+            )
+
+            if (
+                retrieval_confidence
+                < INSUFFICIENT_CONFIDENCE_THRESHOLD
+            ):
+                return {
+                    "answer": NOT_FOUND_INSUFFICIENT,
+                    "sources": [],
+                    "confidence": 0.0,
+                }
 
             # =====================================================
             # BUILD PROMPT
@@ -287,10 +315,9 @@ class RAGService:
                 answer
             )
 
-            retrieval_confidence = (
-                self._compute_retrieval_confidence(
-                    relevant_chunks
-                )
+            answer = self._remove_unsupported_claims(
+                answer,
+                relevant_chunks,
             )
 
             sources = self._filter_sources_by_answer_usage(
@@ -467,6 +494,12 @@ class RAGService:
                 )
             )
 
+            self._log_retrieval_diagnostics(
+                question,
+                ranked_results[:8],
+                label="ranked",
+            )
+
             if not self._is_retrieval_relevant(
                 question,
                 ranked_results,
@@ -486,6 +519,25 @@ class RAGService:
 
                 yield NOT_FOUND
 
+                return
+
+            retrieval_confidence = (
+                self._compute_retrieval_confidence(
+                    relevant_chunks
+                )
+            )
+
+            self._log_retrieval_diagnostics(
+                question,
+                relevant_chunks,
+                label="selected",
+            )
+
+            if (
+                retrieval_confidence
+                < INSUFFICIENT_CONFIDENCE_THRESHOLD
+            ):
+                yield NOT_FOUND_INSUFFICIENT
                 return
 
             context_blocks, _ = (
@@ -576,7 +628,7 @@ class RAGService:
             return True
 
         # Very short utterances in a thread are usually follow-ups.
-        return len(words) <= 4
+        return len(words) <= 2
 
     def _extract_context_terms(
         self,
@@ -831,6 +883,42 @@ class RAGService:
             for row in relevant_chunks
         ) / len(relevant_chunks)
 
+    def _log_retrieval_diagnostics(
+        self,
+        question: str,
+        chunks: list[dict],
+        label: str = "selected",
+    ) -> None:
+        """Log retrieval evidence without printing to stdout."""
+
+        if not logger.isEnabledFor(logging.INFO):
+            return
+
+        logger.info(
+            "RAG retrieval %s question=%r chunk_count=%s",
+            label,
+            question,
+            len(chunks),
+        )
+
+        for idx, row in enumerate(chunks, start=1):
+            metadata = row.get("metadata", {})
+            logger.info(
+                (
+                    "RAG chunk %s file=%r page=%r semantic=%s "
+                    "final=%s distance=%s kind=%r phase=%s text=%r"
+                ),
+                idx,
+                metadata.get("filename") or metadata.get("file"),
+                metadata.get("page"),
+                row.get("confidence"),
+                round(float(row.get("final_score", 0.0)), 3),
+                row.get("distance"),
+                metadata.get("chunk_kind"),
+                label,
+                row.get("text", "")[:500],
+            )
+
     def _apply_low_confidence_notice(
         self,
         answer: str,
@@ -926,6 +1014,8 @@ class RAGService:
                 )
             )
 
+        max_chunks = self._max_context_chunks(question or "")
+
         for row in ranked_results:
 
             text = (
@@ -947,7 +1037,7 @@ class RAGService:
             # Prevent one document domination
             if (
                 document_usage[filename]
-                >= 3
+                >= 2
             ):
                 continue
 
@@ -962,8 +1052,8 @@ class RAGService:
                     )
                 )
                 min_overlap = max(
-                    0.08,
-                    top_question_overlap * 0.35,
+                    0.15,
+                    top_question_overlap * 0.50,
                 )
                 if (
                     chunk_overlap < min_overlap
@@ -997,7 +1087,7 @@ class RAGService:
                 filename
             ] += 1
 
-            if len(relevant_chunks) >= 8:
+            if len(relevant_chunks) >= max_chunks:
                 break
 
         return relevant_chunks
@@ -1086,13 +1176,15 @@ class RAGService:
                 text,
             ).strip()
 
+            text = text[:1400]
+
             context_blocks.append(
                 f"""
-DOCUMENT: {filename}
-PAGE: {page}
+                    DOCUMENT: {filename}
+                    PAGE: {page}
 
-{text}
-"""
+                    {text}
+                """.strip()
             )
 
         return context_blocks, sources
@@ -1113,6 +1205,7 @@ PAGE: {page}
         current_terms = primary_terms or self._terms(
             question
         )
+        intent = self._question_intent(question)
 
         ranked = []
 
@@ -1155,15 +1248,23 @@ PAGE: {page}
                     / max(len(context_terms), 1)
                 )
 
-            definition_bonus = (
-                0.10
-                if self._looks_like_definition(
-                    text
+            metadata = row.get("metadata", {})
+            chunk_kind = metadata.get("chunk_kind", "general")
+
+            intent_bonus = (
+                self._intent_match_bonus(
+                    intent,
+                    text,
+                    chunk_kind,
                 )
-                else 0.0
             )
 
-            exact_phrase_bonus = 0.0
+            exact_topic_bonus = (
+                self._exact_topic_bonus(
+                    question,
+                    text,
+                )
+            )
 
             question_lower = (
                 question.lower()
@@ -1174,20 +1275,32 @@ PAGE: {page}
                 in text.lower()
             ):
 
-                exact_phrase_bonus = 0.10
+                exact_topic_bonus += 0.10
 
             history_weight = (
                 0.06 if context_terms else 0.0
             )
 
+            semantic_only_penalty = (
+                0.12
+                if overlap == 0.0
+                and not exact_topic_bonus
+                and semantic_score < 0.72
+                else 0.0
+            )
+
             final_score = min(
                 1.0,
-                (
-                    semantic_score * 0.52
-                    + overlap * 0.36
-                    + context_overlap * history_weight
-                    + definition_bonus
-                    + exact_phrase_bonus
+                max(
+                    0.0,
+                    (
+                        semantic_score * 0.46
+                        + overlap * 0.40
+                        + context_overlap * history_weight
+                        + intent_bonus
+                        + exact_topic_bonus
+                        - semantic_only_penalty
+                    ),
                 ),
             )
 
@@ -1314,6 +1427,190 @@ PAGE: {page}
             pattern in text
             for pattern in patterns
         )
+
+    def _question_intent(
+        self,
+        question: str,
+    ) -> str:
+        q = question.lower().strip()
+
+        if any(
+            phrase in q
+            for phrase in (
+                "difference between",
+                "compare",
+                " vs ",
+                " versus ",
+                "differentiate",
+                "similarities",
+            )
+        ):
+            return "comparison"
+
+        if re.search(r"\b(types|kinds|classification)\s+of\b", q):
+            return "type_list"
+
+        if re.match(r"^(what is|what are|define|definition of)\b", q):
+            return "definition"
+
+        return "general"
+
+    def _intent_match_bonus(
+        self,
+        intent: str,
+        text: str,
+        chunk_kind: str = "general",
+    ) -> float:
+        lowered = text.lower()
+
+        if intent == "definition":
+            return (
+                0.18
+                if chunk_kind == "definition"
+                or self._looks_like_definition(text)
+                else 0.0
+            )
+
+        if intent == "type_list":
+            if chunk_kind == "type_list" or re.search(
+                r"\b(types of|kinds of|classified into|classification|include|includes)\b",
+                lowered,
+            ):
+                return 0.18
+
+        if intent == "comparison":
+            if chunk_kind == "comparison" or re.search(
+                r"\b(difference|compare|comparison|versus|whereas|while)\b",
+                lowered,
+            ):
+                return 0.18
+
+        return 0.0
+
+    def _exact_topic_bonus(
+        self,
+        question: str,
+        text: str,
+    ) -> float:
+        terms = self._question_topic_terms(question)
+
+        if not terms:
+            return 0.0
+
+        lowered = text.lower()
+        bonus = 0.0
+
+        if all(
+            self._term_in_text(term, lowered)
+            for term in terms[:4]
+        ):
+            bonus += 0.08
+
+        if len(terms) == 1 and self._term_in_text(
+            terms[0],
+            lowered,
+        ):
+            bonus += 0.08
+
+        words = re.findall(
+            r"[a-zA-Z0-9_]+",
+            question.lower(),
+        )
+        topic_words = [
+            self._normalize_term(word)
+            for word in words
+            if word in terms
+            or self._normalize_term(word) in terms
+        ]
+
+        for left, right in zip(topic_words, topic_words[1:]):
+            if f"{left} {right}" in lowered:
+                bonus += 0.04
+
+        return min(bonus, 0.16)
+
+    def _question_topic_terms(
+        self,
+        question: str,
+    ) -> list[str]:
+        stop_words = self._stop_words()
+        words = re.findall(
+            r"[a-zA-Z0-9_]+",
+            question.lower(),
+        )
+
+        terms: list[str] = []
+        seen: set[str] = set()
+
+        for word in words:
+            term = self._normalize_term(word)
+            if (
+                len(term) <= 2
+                or term in stop_words
+                or term in seen
+            ):
+                continue
+            terms.append(term)
+            seen.add(term)
+
+        return terms
+
+    def _normalize_term(
+        self,
+        word: str,
+    ) -> str:
+        word = word.lower().strip()
+
+        if len(word) > 4 and word.endswith("ies"):
+            return word[:-3] + "y"
+
+        if (
+            len(word) > 4
+            and re.search(r"(ches|shes|sses|xes|zes)$", word)
+        ):
+            return word[:-2]
+
+        if len(word) > 3 and word.endswith("s"):
+            return word[:-1]
+
+        return word
+
+    def _term_in_text(
+        self,
+        term: str,
+        lowered_text: str,
+    ) -> bool:
+        return bool(
+            re.search(
+                rf"\b{re.escape(term)}s?\b",
+                lowered_text,
+            )
+        )
+
+    def _max_context_chunks(
+        self,
+        question: str,
+    ) -> int:
+        q = question.lower()
+
+        if any(
+            phrase in q
+            for phrase in (
+                "explain in detail",
+                "describe in detail",
+                "comprehensive",
+                "elaborate",
+            )
+        ):
+            return 5
+
+        if self._question_intent(question) in {
+            "comparison",
+            "type_list",
+        }:
+            return 4
+
+        return 3
 
     def _looks_like_raw_chunk(
         self,
@@ -1513,13 +1810,90 @@ PAGE: {page}
 
         return len(answer.split()) < 40
 
+    def _remove_unsupported_claims(
+        self,
+        answer: str,
+        relevant_chunks: list[dict],
+    ) -> str:
+        """Drop risky technical claims when retrieved context does not support them."""
+
+        if not answer or not relevant_chunks:
+            return answer
+
+        context = " ".join(
+            row.get("text", "")
+            for row in relevant_chunks
+        ).lower()
+
+        risky_claims = (
+            "direct access",
+            "random access",
+            "any particular element",
+            "any element directly",
+            "both directions",
+            "bidirectional",
+            "at any position",
+            "constant time",
+            "o(1)",
+            "o(n)",
+            "o(log n)",
+        )
+
+        sentences = self._extract_sentences(answer)
+        kept: list[str] = []
+
+        for sentence in sentences:
+            sentence_lower = sentence.lower()
+            unsupported = any(
+                claim in sentence_lower
+                and claim not in context
+                for claim in risky_claims
+            )
+
+            if unsupported:
+                logger.info(
+                    "Removed unsupported generated claim: %s",
+                    sentence[:250],
+                )
+                continue
+
+            kept.append(sentence.strip())
+
+        cleaned = " ".join(
+            sentence for sentence in kept if sentence
+        ).strip()
+
+        return cleaned or answer
+
     def _terms(
         self,
         text: str,
     ) -> set[str]:
 
-        stop_words = {
+        stop_words = self._stop_words()
 
+        words = re.findall(
+            r"[a-zA-Z0-9_]+",
+            text.lower(),
+        )
+
+        return {
+
+            self._normalize_term(word)
+
+            for word in words
+
+            if (
+                len(self._normalize_term(word)) > 2
+                and self._normalize_term(word) not in stop_words
+            )
+
+        }
+
+    def _stop_words(
+        self,
+    ) -> set[str]:
+        return {
             "what",
             "is",
             "are",
@@ -1545,25 +1919,15 @@ PAGE: {page}
             "give",
             "tell",
             "about",
-
-        }
-
-        words = re.findall(
-            r"[a-zA-Z0-9_]+",
-            text.lower(),
-        )
-
-        return {
-
-            word
-
-            for word in words
-
-            if (
-                len(word) > 2
-                and word not in stop_words
-            )
-
+            "type",
+            "types",
+            "kind",
+            "kinds",
+            "classification",
+            "compare",
+            "difference",
+            "between",
+            "versus",
         }
 
     def _is_not_found_response(

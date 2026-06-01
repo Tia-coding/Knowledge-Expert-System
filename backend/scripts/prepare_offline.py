@@ -2,7 +2,7 @@ from sentence_transformers import SentenceTransformer
 
 
 def main() -> None:
-    model_name = "sentence-transformers/all-MiniLM-L6-v2"
+    model_name = "BAAI/bge-base-en-v1.5"
     print(f"Caching embedding model: {model_name}")
     SentenceTransformer(model_name)
     print("Embedding model cached successfully.")

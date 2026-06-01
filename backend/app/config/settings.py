@@ -65,17 +65,17 @@ class Settings(BaseSettings):
         "http://localhost:11434"
     )
 
-    ollama_model: str = "llama3"
+    ollama_model: str = "llama3.2:3b"
 
     # =========================================================
     # RAG SETTINGS
     # =========================================================
 
-    rag_top_k: int = 12
+    rag_top_k: int = 8
 
     chunk_size: int = 1400
 
-    chunk_overlap: int = 350
+    chunk_overlap: int = 250
 
     # =========================================================
     # FILE LIMITS

@@ -76,7 +76,7 @@ class OllamaClient:
         try:
 
             async with httpx.AsyncClient(
-                timeout=240
+                timeout=600
             ) as client:
 
                 response = await client.post(
@@ -144,7 +144,7 @@ class OllamaClient:
         try:
 
             async with httpx.AsyncClient(
-                timeout=300
+                timeout=600
             ) as client:
 
                 async with client.stream(
@@ -209,32 +209,21 @@ class OllamaClient:
     ) -> dict:
 
         system_prompt = """
-You are an advanced AI Knowledge Assistant.
+You are a document-grounded assistant.
 
-Your role is to answer questions professionally using the uploaded documents.
+Use only the retrieved context supplied in the user prompt. If the context
+does not support the answer, respond exactly:
+I could not find sufficient information about this topic in the uploaded documents.
 
-IMPORTANT RULES:
+Answer the current question directly. For simple definition questions, give a
+concise definition first and add only the most relevant supported details. For
+detailed or comparison questions, provide a fuller answer when the retrieved
+context supports it.
 
-- Generate concise, human-like responses.
-- Avoid textbook narration.
-- Avoid storytelling or filler explanations.
-- Do not repeat information.
-- Summarize information naturally.
-- Combine information from multiple documents intelligently.
-- Preserve technical correctness.
-- Explain concepts clearly and directly.
-- Avoid robotic formatting.
-- Ignore OCR corruption or incomplete text.
-- If information is unavailable, clearly say so.
-- Never hallucinate facts outside the provided context.
-
-RESPONSE STYLE:
-
-- Professional and conversational.
-- Compact but informative.
-- Clear paragraph structure.
-- Bullet points only when useful.
-- Modern AI assistant tone.
+Do not merge related concepts unless the context explicitly connects them to
+the requested topic. Do not treat examples, implementations, or neighboring
+sections as definitions of the requested term. Avoid filler, repetition, and
+unsupported background knowledge.
 """
 
         return {
@@ -254,21 +243,21 @@ RESPONSE STYLE:
                 # GENERATION QUALITY
                 # =====================================
 
-                "temperature": 0.25,
+                "temperature": 0.15,
 
                 "top_p": 0.9,
 
                 "top_k": 40,
 
-                "repeat_penalty": 1.2,
+                "repeat_penalty": 1.15,
 
                 # =====================================
                 # CONTEXT + OUTPUT
                 # =====================================
 
-                "num_predict": 600,
+                "num_predict": 450,
 
-                "num_ctx": 8192,
+                "num_ctx": 4096,
 
                 # =====================================
                 # STABILITY

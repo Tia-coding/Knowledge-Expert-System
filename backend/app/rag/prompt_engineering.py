@@ -1,10 +1,9 @@
-
 from typing import List, Optional
 import re
 
 
 class PromptEngineer:
-    """Prompt engineering utility for intelligent RAG responses."""
+    """Prompt engineering utility for intelligent RAG responses with professional Markdown formatting."""
 
     # =========================================================
     # ANSWER TYPE DETECTION (dynamic, not topic-specific)
@@ -13,9 +12,7 @@ class PromptEngineer:
     @staticmethod
     def detect_answer_type(question: str) -> str:
         """Classify answer structure: structured only when the question needs it."""
-
         q = question.lower().strip()
-        words = q.split()
 
         # Explicit algorithm requests → structured
         if re.search(r"\balgorithm\b", q) or "pseudocode" in q:
@@ -26,11 +23,14 @@ class PromptEngineer:
             phrase in q
             for phrase in (
                 "difference between",
-                "compare ",
+                "compare",
+                "comparison",
                 " vs ",
                 " versus ",
                 "differ from",
                 "similarities and",
+                "tabular form",
+                "table",
             )
         ):
             return "comparison"
@@ -50,15 +50,92 @@ class PromptEngineer:
             return "procedure"
 
         # List-style requests → light structure
-        if any(
-            word in q
-            for word in ("list", "types of", "kinds of", "enumerate")
+        if (
+            re.search(
+                r"\b(types|kinds|categories|classifications)\s+of\b",
+                q,
+            )
+            or re.search(
+                r"^(please\s+)?(list|enumerate)\b",
+                q,
+            )
+            or re.search(
+                r"\b(give|show|provide)\s+(me\s+)?(a\s+)?list\s+of\b",
+                q,
+            )
         ):
             return "list"
 
-        # Everything else: natural conversational explanation
-        # (what is / explain / describe / follow-ups like "explain in detail")
         return "conversational"
+
+    @staticmethod
+    def answer_depth(question: str) -> str:
+        """Infer how much detail the user is asking for, without topic rules."""
+        q = question.lower().strip()
+        words = q.split()
+
+        if any(
+            phrase in q
+            for phrase in (
+                "explain in detail",
+                "describe in detail",
+                "in detail",
+                "elaborate",
+                "comprehensive",
+                "deeply explain",
+                "tell me more",
+                "more detail",
+            )
+        ):
+            return "detailed"
+
+        if (
+            re.match(r"^(what is|what are|define|definition of)\b", q)
+            or len(words) <= 5
+        ):
+            return "brief"
+
+        return "normal"
+
+    @staticmethod
+    def length_guidance(question: str) -> str:
+        """Give the LLM a strict but intent-sensitive length target."""
+        answer_type = PromptEngineer.detect_answer_type(question)
+        depth = PromptEngineer.answer_depth(question)
+
+        if answer_type == "comparison":
+            return (
+                "Length target: Return only the comparison table. "
+                "Do not generate bullet points, notes, summaries, or additional sections."
+            )
+
+        if answer_type == "list":
+            return (
+                "Length target: List only the supported items using Markdown bullet points. "
+                "Add one short explanation per item when the context supports it."
+            )
+
+        if depth == "detailed":
+            return (
+                "Length target: Provide a comprehensive explanation. "
+                "Cover all relevant information from the retrieved knowledge. "
+                "Combine related information into coherent sections. "
+                "Avoid copying document structure directly. "
+                "Use headings and bullet points only when they improve readability."
+            )
+
+        if depth == "brief":
+            return (
+                "Length target: One short Markdown header plus 1-2 natural paragraphs. "
+                "Give a clear definition and include only useful supported details."
+            )
+
+        return (
+            "Length target: Answer only what the question asks. "
+            "Provide additional sections such as characteristics, types, advantages, "
+            "disadvantages, applications, examples, or implementation details only "
+            "when they are relevant to the user's request."
+        )
 
     @staticmethod
     def detect_question_type(question: str) -> str:
@@ -69,31 +146,29 @@ class PromptEngineer:
     def grounding_rules() -> str:
         return """
 DOCUMENT GROUNDING:
-- Use ONLY the provided document context. Never invent facts.
-- Do not add background knowledge that is not supported by the context blocks.
-- Synthesize across multiple context blocks when they support the same topic.
-- If several passages are relevant, combine them into one coherent explanation.
-- If information is partial, state limitations briefly then give the best grounded summary.
-- If the context does not cover the question, say clearly that the uploaded documents
-  do not contain enough information — do not guess.
-- The CURRENT QUESTION always has highest priority; conversation history clarifies
-  follow-ups but must not override what the user is asking now.
-- Be careful with capability and performance claims such as direct access,
-  random access, bidirectional traversal, arbitrary-position updates, or
-  Big-O complexity. Include them only when the context explicitly supports them.
+* Use only information supported by the retrieved document context.
+* Never invent facts or add unsupported information.
+* Do not include chapter numbers, section numbers, page numbers, figure references, or document references in the answer body text.
+* Never include raw placeholder links like 'https://example.com' or text brackets like '[DOCUMENT GROUNDING]'.
 """
 
     @staticmethod
     def anti_copy_rules() -> str:
         return """
 TUTORING & SYNTHESIS RULES:
-- Read all relevant chunks, understand them, then explain naturally in your own words.
-- Do NOT copy sentences or long passages from the source text.
-- Write like a professor or tutor — not a PDF dump.
-- Answer ONLY the topic in the current question; skip off-topic context blocks.
-- Use examples only when they appear in the documents and help understanding.
-- Do not treat a related term as equivalent to the requested term unless the
-  context explicitly says they are the same.
+
+* Answer the user's question directly with educational clarity.
+* Focus purely on the topic requested.
+* Explain concepts clearly in your own words while preserving technical accuracy.
+* Short technical definitions or exact values may be used directly when accuracy requires it.
+* Do not copy document sections verbatim.
+* Synthesize information from multiple retrieved passages.
+* Do not reproduce source headings exactly.
+* Remove document formatting artifacts before answering.
+* Convert raw notes into natural explanations.
+* When a retrieved passage begins mid-sentence, rewrite it into a complete grammatical sentence.
+* Ensure every sentence starts with a capital letter.
+* Do not copy fragmented text directly from retrieved passages.
 """
 
     @staticmethod
@@ -103,33 +178,28 @@ TUTORING & SYNTHESIS RULES:
                 "I could not find sufficient information about this topic "
                 "in the uploaded documents."
             )
-        return (
-            "Based on the uploaded documents, the available information "
-            "is limited.\n\n"
-            "Here is the best grounded summary from what is available:\n\n"
-        )
+        return ""
 
     @staticmethod
     def formatting_rules_conversational() -> str:
         return """
-FORMATTING:
-- Use plain text only. No markdown (no **, __, #, backticks).
-- Write naturally in clear paragraphs like a knowledgeable tutor.
-- Do NOT use rigid templates (Definition / Key Characteristics / Applications / Example)
-  unless a short heading genuinely improves readability.
-- Answer the question directly first, then expand with useful detail.
-- Use bullets or short headings only when they help; most answers should be prose.
-- Never leave empty sections or placeholder labels.
+FORMATTING RULES:
+
+- Use Markdown headings when useful.
+- Use bullet points for key details.
+- Keep paragraphs short and readable.
+- Highlight important terms using bold text.
+- Avoid unnecessary tables.
 """
 
     @staticmethod
     def formatting_rules_structured() -> str:
         return """
-FORMATTING:
-- Use plain text only. No markdown.
-- Use the section labels specified below; omit any section with no real content.
-- Never output empty sections or placeholders like "N/A" or "Not specified".
-- Numbered steps must be complete (no blank "1." lines).
+FORMATTING (STRUCTURED STYLE):
+- Use bullet points for comparisons unless the user explicitly requests a table.
+- Use ordered lists (1. Step one) for sequential workflows, processes, or algorithms.
+- Use code blocks (```python ... ``` or similar languages) for any technical code blocks or pseudocode snippets.
+- Ensure all markdown elements are complete and well-formed.
 """
 
     @staticmethod
@@ -146,13 +216,10 @@ FORMATTING:
         max_turns: int = 6,
     ) -> str:
         """Format prior turns for prompt injection (current question is separate)."""
-
         if not conversation_history:
             return ""
 
-        # Each stored row is user+assistant; cap total message pairs.
         recent = conversation_history[-(max_turns * 2):]
-
         lines: list[str] = []
         for turn in recent:
             role = turn.get("role", "")
@@ -170,8 +237,7 @@ FORMATTING:
             return ""
 
         return (
-            "RECENT CONVERSATION (for follow-up context only — "
-            "answer using document context below):\n"
+            "RECENT CONVERSATION (For context tracking only — rely primarily on document content):\n"
             + "\n\n".join(lines)
         )
 
@@ -181,17 +247,13 @@ FORMATTING:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         """Combine synthesis, coherence, and continuation guidance."""
-
         signals = [
             "Use only context passages that directly relate to the current question.",
             PromptEngineer.build_context_synthesis_signal(context_blocks),
             PromptEngineer.build_coherence_signal(context_blocks),
             PromptEngineer.build_continuation_signal(conversation_history),
         ]
-
-        return "\n".join(
-            signal for signal in signals if signal
-        )
+        return "\n".join(signal for signal in signals if signal)
 
     @staticmethod
     def _append_prompt_sections(
@@ -201,7 +263,6 @@ FORMATTING:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         """Inject conversation memory and multi-chunk synthesis guidance."""
-
         history_block = PromptEngineer.format_conversation_history(
             conversation_history
         )
@@ -229,34 +290,51 @@ FORMATTING:
 
     @staticmethod
     def common_rules(conversational: bool = True) -> str:
-
-        formatting = (
-            PromptEngineer.formatting_rules_conversational()
-            if conversational
-            else PromptEngineer.formatting_rules_structured()
-        )
-
         return f"""
-IMPORTANT RULES:
+IMPORTANT SYSTEM CONSTRAINTS:
 
-1. Start immediately with the answer — no preamble.
-2. Do not mention files, context, or synthesis unless saying the evidence is insufficient.
-3. Ignore corrupted OCR text.
-4. Preserve technical accuracy; use clear educational language.
-5. For follow-ups, use conversation history to resolve pronouns and topics.
-6. If the user asks to elaborate, expand the SAME topic from the prior turn.
-7. Never say information was not found when the context and conversation already cover the topic.
+1. Answer directly using only retrieved document content.
+2. Never invent facts.
+3. If and only if no relevant information exists in the retrieved context,
+respond exactly:
+"The requested information was not found in the uploaded documents."
+4. Preserve technical accuracy.
+5. Use clean Markdown formatting.
+6. Keep answers focused on the question.
+7. Do not include greetings or conversational filler.
+8. Sources are displayed separately by the system; do not mention page numbers or document names inside the answer body.
+9. Never mention:
+   - document context
+   - provided context
+   - uploaded documents
+   - source material
+   inside the answer body.
+10. Do not use phrases such as:
+    - According to the definition
+    - In summary
+    - It can be understood that
+    - This means that
+unless they are necessary for clarity.
+11. Never output raw markdown examples, document fragments,
+    OCR artifacts, code snippets, or formatting remnants
+    unless the user explicitly requests them.
+
+12. Convert extracted content into natural language explanations.
+
+
+- When the user explicitly requests a table, generate a valid Markdown table with:
+  - a header row
+  - a separator row
+  - at least one data row
+
+- Never use H1 (# Heading).
+- Use H2 (##) or H3 (###) headings only.
+- Use bullet points for comparisons by default.
+- Generate markdown tables only when the user explicitly requests a table.
 
 {PromptEngineer.grounding_rules()}
-
-{formatting}
-
 {PromptEngineer.anti_copy_rules()}
 """
-
-    # =========================================================
-    # CONVERSATIONAL PROMPT (default for most questions)
-    # =========================================================
 
     @staticmethod
     def build_conversational_prompt(
@@ -264,61 +342,84 @@ IMPORTANT RULES:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
         context = "\n\n".join(context_blocks)
 
-        follow_up_note = ""
-        if conversation_history and len(conversation_history) >= 2:
-            follow_up_note = (
-                "\nFOLLOW-UP: The user is continuing the same discussion. "
-                "Identify the topic from recent turns and answer the CURRENT QUESTION. "
-                "For 'explain in detail' / 'elaborate', expand with more concepts and "
-                "examples from the documents — never claim the topic was not found.\n"
-            )
-
         base = f"""
-You are a document-grounded academic assistant. Answer questions clearly and naturally using the provided documents.
-{PromptEngineer.common_rules(conversational=True)}
-{follow_up_note}
+    You are an intelligent document-grounded AI assistant.
 
-STYLE:
-- Answer according to the user's question.
-- Start directly with the answer.
-- Be concise for simple questions.
-- Be detailed only when the question requires detail.
-- Use a natural academic writing style.
-- Avoid unnecessary introductions, analogies, storytelling, or filler text.
-- Focus on the most relevant information first.
-- Expand only when it improves understanding.
-- For 'what is' questions: give a clear definition followed by explanation.
-- For 'what is' questions: define the exact requested term first; avoid drifting
-  into related concepts unless they clarify that term.
-- For 'types of' questions: list only types explicitly supported by the context;
-  do not infer extra types from implementation details.
-- For 'explain in detail' questions: provide a significantly more detailed explanation than the previous answer.
-- Use multiple paragraphs when useful.
-- Explain concepts, characteristics, uses, and related ideas when supported by the documents.
-- Never generate meta-statements such as:
-  "Here is a structured response",
-  "Based on the context",
-  "The current question controls what to deliver",
-  or similar system-style text.
+    Answer using ONLY the retrieved document context.
+
+    If the answer cannot be supported by the retrieved context, respond exactly:
+    "The requested information was not found in the uploaded documents."
+
+    {PromptEngineer.common_rules(conversational=True)}
+
+    ANSWER STYLE:
+
+- Adapt the structure naturally to the user's question.
+- Use clear markdown formatting.
+- When using a section title, always generate a valid Markdown heading using ##.
+- Never output plain text titles without Markdown heading syntax.
+- Use bullet points for collections, classifications, advantages, disadvantages, features, or comparisons.
+- Choose concise topic-based section titles only when necessary.
+- Avoid creating unnecessary headings for short answers.
+- Avoid generic headings such as "Answer", "List", "Details", or "Differences".
+- Do not generate markdown tables unless explicitly requested by the user.
 
 
+    QUESTION INTENT RULES:
 
-ANSWER LENGTH:
+Definition Questions:
+- Give a direct definition first.
+- Provide a brief explanation.
+- Do not include code, pseudocode, algorithms, implementation details, or lengthy examples unless explicitly requested.
 
-- Simple factual questions: short and direct.
-- Conceptual questions: moderately detailed.
-- "Explain in detail" questions: comprehensive explanation.
-- Let the complexity of the question determine the answer length.
+Explanation Questions:
+- Provide a detailed explanation.
+- Include structure, working, characteristics, types, examples, advantages, disadvantages, and applications when supported by the documents.
+
+Comparison Questions:
+- Always use a markdown comparison table when enough information exists.
+- The first column must be "Feature".
+- The remaining columns must contain the compared concepts.
 
 
-DOCUMENT CONTEXT:
-{context}
+Do NOT add generic statements such as:
+- The information was found in the uploaded documents.
+- The requested information was found in the context.
+- Based on the uploaded documents.
 
-Write your answer now:
-""".strip()
+
+    GENERAL RULES:
+
+    * Answer the user's question directly.
+    * Use clear Markdown formatting.
+    * Use headings only when they improve readability.
+    * Prefer natural explanations over rigid templates.
+    * Avoid repeating information.
+    * Do not echo the user's question.
+    * Do not mention document names, page numbers, chapters, or references.
+    * Keep simple questions short.
+    * Provide more detail only when the question requires it.
+
+    DEFINITION RULES:
+
+    - For questions beginning with "What is", "What are", "Define", or "Definition of":
+    * Start with a direct definition.
+    * Keep the first explanation concise.
+    * Do not automatically include types, advantages, disadvantages, applications,
+        examples, implementation details, or comparisons unless requested.
+    * Provide only the definition and a brief explanation.
+    * Do not include algorithms, pseudocode, source code, implementation examples, or detailed procedures unless explicitly requested.
+    * Do not include code snippets for "What is", "Define", or "Meaning of" questions.
+
+    RETRIEVED KNOWLEDGE:
+    {context}
+
+    {PromptEngineer.length_guidance(question)}
+
+    Generate the answer following the instructions above.
+    """.strip()
 
         return PromptEngineer._append_prompt_sections(
             base,
@@ -326,6 +427,7 @@ Write your answer now:
             question,
             conversation_history,
         )
+    
 
     @staticmethod
     def build_definition_prompt(
@@ -334,13 +436,11 @@ Write your answer now:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         return PromptEngineer.build_conversational_prompt(
-            question,
-            context_blocks,
-            conversation_history,
+            question, context_blocks, conversation_history
         )
 
     # =========================================================
-    # HOW-TO PROMPT
+    # HOW-TO / PROCEDURE PROMPT
     # =========================================================
 
     @staticmethod
@@ -349,24 +449,17 @@ Write your answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an academic tutor explaining a procedure.
+You are an intelligent document-grounded AI assistant.{PromptEngineer.common_rules(conversational=False)}
 
-{PromptEngineer.common_rules(conversational=False)}
-
-Provide a brief explanation.
-
-If the documents contain steps,
-present them as a numbered list.
-
-Include notes only when useful.
-
-Do not create Objective, Example, Notes, or any section that has no content.
-
-Answer naturally.
+PROCEDURE ANSWERING RULES:
+* Present steps as a numbered list.
+* Add short explanations where necessary.
+* Keep steps concise and easy to follow.
+* Put step titles in bold (e.g., "1. **Initialize System**: ...").
+* Keep things highly structural, functional, and organized.
 
 DOCUMENT CONTEXT:
 {context}
@@ -388,9 +481,7 @@ Write the formatted answer now:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         return PromptEngineer.build_procedure_prompt(
-            question,
-            context_blocks,
-            conversation_history,
+            question, context_blocks, conversation_history
         )
 
     @staticmethod
@@ -399,39 +490,19 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an academic tutor explaining an algorithm from the documents.
+You are an intelligent document-grounded AI assistant.{PromptEngineer.common_rules(conversational=False)}
 
-{PromptEngineer.common_rules(conversational=False)}
-
-FORMAT:
-
-Start with a short explanation of the algorithm.
-
-Then provide numbered steps only if the algorithm steps are clearly present in the documents.
-
-Include Time Complexity and Space Complexity only when available.
-
-Do NOT create sections that have no content.
-
-Do NOT generate:
-- Pseudo Code
-- Description
-- Explanation
-- Not Applicable
-- N/A
-
-if those details are not present.
-
-The answer should read naturally like a tutor explaining an algorithm.
+ALGORITHM ANSWERING RULES:
+* Use explicit code markdown blocks (e.g., ```python) to display structured pseudocode or algorithmic implementations.
+* List operational bounds, parameters, or time/space complex metrics using clear Markdown bullet items.
 
 DOCUMENT CONTEXT:
 {context}
 
-Write the formatted answer now:
+Write the formatted markdown answer now:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -451,26 +522,41 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an advanced AI assistant.
+You are an advanced AI assistant providing a clean structured list.
+{PromptEngineer.common_rules(conversational=False)}
 
-The user is asking for a structured list response.
+LIST ANSWERING RULES:
 
-{PromptEngineer.common_rules(conversational=True)}
+* Present each item as a bullet point.
+* Add a short explanation when supported by the retrieved knowledge.
+* Do not introduce unsupported items.
+* Avoid repeating information across bullets.
+* Keep each bullet concise.
+* Do not add introductory paragraphs unless necessary.
+* Organize the list using a meaningful title when helpful.
+* Avoid generic headings.
 
-SPECIAL INSTRUCTIONS:
+For list or types questions:
 
-- Use concise bullet points for each type or item.
-- One short line per bullet; no repetition.
-- Do not add an introduction sentence before the list.
+- Return only the requested list and brief explanations.
+- Do not automatically continue into detailed subsections.
+- Do not expand each item into separate sections unless explicitly requested.
+- Do not add source citations inside the answer body.
+- Do not generate sections such as:
+  - References
+  - Sources
+  - Notes
+  - Additional Information
+- End the answer after the final list item.
+
 
 DOCUMENT CONTEXT:
 {context}
 
-ANSWER (start directly, no preamble):
+ANSWER:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -490,27 +576,110 @@ ANSWER (start directly, no preamble):
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an academic tutor comparing concepts.
-
+You are an intelligent document-grounded AI assistant.
 {PromptEngineer.common_rules(conversational=False)}
 
-FORMAT:
+COMPARISON RULES:
 
-Compare the concepts using short paragraphs or bullet points.
+- If the user requests a table, tabular form, comparison table, or markdown table:
+  * Return a valid GitHub-Flavored Markdown table.
+  * Use one header row.
+  * Use one separator row.
+  * Ensure every row has the same number of columns.
+  * Do not add blank lines inside the table.
 
-Use tables only when the source documents already contain tabular comparisons.
+- Otherwise:
+  * Present differences as bullet points.
+  * Each bullet should describe one difference.
+  * Avoid long paragraphs.
 
-Summary:
-(2-3 sentences in your own words.)
+
+
+For comparison questions:
+
+- Generate ONLY a markdown table.
+- The first column must be "Feature".
+- The remaining columns must be the compared concepts.
+- Include all comparison points inside the table.
+- Do NOT generate sections such as:
+  - Characteristics
+  - Features
+  - Additional Notes
+  - Summary
+  - Conclusion
+- Do NOT generate bullet points outside the table.
+- End the answer immediately after the table.
+
+
+Never generate:
+- Note
+- Notes
+- Additional Information
+- Remarks
+- Conclusion
+
+unless the user explicitly requests them.
+
+COMPARISON OUTPUT RULES:
+
+- Return exactly one markdown table.
+- The response must begin with the table header.
+- The response must end at the last table row.
+- Do not generate:
+  - Notes
+  - Conclusions
+  - Summaries
+  - Characteristics
+  - Additional Information
+  - Remarks
+  - Explanatory paragraphs
+  - Bullet points
+
+Any content outside the table is invalid.
+
+
+IMPORTANT:
+
+Return ONLY a markdown table.
+
+The response must start with:
+
+| Feature |
+
+and must end at the last row of the table.
+
+Do not write any text before or after the table.
+
+COMPARISON FORMAT:
+
+When comparing two or more concepts, generate a markdown table.
+
+The first column must be named Feature.
+
+The remaining columns must use the actual concepts being compared from the user's question.
+
+Each subsequent row must describe one comparison criterion.
+
+Do not create tables with only two columns unless the source information genuinely contains only two fields.
+
+STRICT OUTPUT RULES:
+
+- Output ONLY a markdown table.
+- The first character of the response must be "|".
+- Do not write introductions.
+- Do not write explanations.
+- Do not write notes.
+- Do not write conclusions.
+- Do not write "Here is the markdown table".
+- Do not write any text before or after the table.
 
 DOCUMENT CONTEXT:
 {context}
 
-Write the formatted answer now:
+Write the formatted markdown answer now:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -521,7 +690,7 @@ Write the formatted answer now:
         )
 
     # =========================================================
-    # TECHNICAL PROMPT
+    # TECHNICAL PROMPTS & ALIASES
     # =========================================================
 
     @staticmethod
@@ -530,36 +699,18 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
         context = "\n\n".join(context_blocks)
-
         base = f"""
-You are an academic tutor explaining an implementation.
-
-{PromptEngineer.common_rules(conversational=True)}
-
-FORMAT:
-
-Overview:
-(Brief summary in your own words.)
-
-Approach:
-(Numbered steps or bullets for the implementation logic.)
-
-Notes:
-(Constraints, pitfalls, or requirements from context only.)
+You are an intelligent document-grounded AI assistant.
+{PromptEngineer.common_rules(conversational=False)}
 
 DOCUMENT CONTEXT:
 {context}
 
-Write the formatted answer now:
+Write the formatted markdown answer now:
 """.strip()
-
         return PromptEngineer._append_prompt_sections(
-            base,
-            context_blocks,
-            question,
-            conversation_history,
+            base, context_blocks, question, conversation_history
         )
 
     @staticmethod
@@ -569,9 +720,7 @@ Write the formatted answer now:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         return PromptEngineer.build_conversational_prompt(
-            question,
-            context_blocks,
-            conversation_history,
+            question, context_blocks, conversation_history
         )
 
     @staticmethod
@@ -581,9 +730,7 @@ Write the formatted answer now:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         return PromptEngineer.build_conversational_prompt(
-            question,
-            context_blocks,
-            conversation_history,
+            question, context_blocks, conversation_history
         )
 
     @staticmethod
@@ -593,9 +740,7 @@ Write the formatted answer now:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         return PromptEngineer.build_conversational_prompt(
-            question,
-            context_blocks,
-            conversation_history,
+            question, context_blocks, conversation_history
         )
 
     @staticmethod
@@ -604,15 +749,9 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-        return PromptEngineer.build_explanation_prompt(
-            question,
-            context_blocks,
-            conversation_history,
+        return PromptEngineer.build_conversational_prompt(
+            question, context_blocks, conversation_history
         )
-
-    # =========================================================
-    # GENERAL PROMPT
-    # =========================================================
 
     @staticmethod
     def build_general_prompt(
@@ -621,9 +760,7 @@ Write the formatted answer now:
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
         return PromptEngineer.build_conversational_prompt(
-            question,
-            context_blocks,
-            conversation_history,
+            question, context_blocks, conversation_history
         )
 
     # =========================================================
@@ -636,15 +773,13 @@ Write the formatted answer now:
         context_blocks: List[str],
         conversation_history: Optional[List[dict]] = None,
     ) -> str:
-
         if not context_blocks:
+            return PromptEngineer.format_no_answer_response(question)
 
-            return (
-                PromptEngineer
-                .format_no_answer_response(
-                    question
-                )
-            )
+        q = question.lower().strip()
+        
+        # PRIORITY RULE: If the user is explicitly asking for a definition, force the brief conversational prompt
+        
 
         answer_type = PromptEngineer.detect_answer_type(question)
 
@@ -654,53 +789,32 @@ Write the formatted answer now:
             "procedure": PromptEngineer.build_procedure_prompt,
             "comparison": PromptEngineer.build_comparison_prompt,
             "list": PromptEngineer.build_list_prompt,
-            # Legacy aliases → conversational
-            "definition": PromptEngineer.build_conversational_prompt,
-            "explanation": PromptEngineer.build_conversational_prompt,
-            "general": PromptEngineer.build_conversational_prompt,
-            "advantages": PromptEngineer.build_conversational_prompt,
-            "disadvantages": PromptEngineer.build_conversational_prompt,
-            "implementation": PromptEngineer.build_conversational_prompt,
         }
 
-        builder = builders.get(
-            answer_type,
-            PromptEngineer.build_general_prompt,
-        )
-
-        return builder(
-            question,
-            context_blocks,
-            conversation_history,
-        )
+        builder = builders.get(answer_type, PromptEngineer.build_general_prompt)
+        return builder(question, context_blocks, conversation_history)
 
     # =========================================================
-    # RESPONSE CLEANING & PRESENTATION
+    # CLEANING AND POST-PROCESSING (REFACTORED TO PRESERVE MARKDOWN)
     # =========================================================
 
     @staticmethod
     def strip_markdown(text: str) -> str:
-        """Remove common markdown markers from model output."""
-
-        if not text:
-            return text
-
-        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-        text = re.sub(r"__(.+?)__", r"\1", text)
-        text = re.sub(r"\*(.+?)\*", r"\1", text)
-        text = re.sub(r"`(.+?)`", r"\1", text)
-        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        """DEPRECATED DESTRUCTIVE STRIPPER - Preserves formatting markup now."""
+        # We return text unmodified here to prevent dropping critical bolding,
+        # lists, tables, and headers required by our frontend.
         return text
+
+    @staticmethod
+    def polish_answer(text: str) -> str:
+        """Alias method wrapper to ensure smooth backward-compatibility integration across components."""
+        return PromptEngineer.clean_response(text)
 
     @staticmethod
     def _is_placeholder_content(content: str) -> bool:
         normalized = re.sub(
-            r"\s+",
-            " ",
-            (content or "").strip().lower(),
-        )
-        normalized = normalized.rstrip(".,;:")
-
+            r"\s+", " ", (content or "").strip().lower()
+        ).rstrip(".,;:")
         if not normalized:
             return True
 
@@ -717,137 +831,13 @@ Write the formatted answer now:
             "-",
             "...",
         )
-
-        if normalized in placeholders:
-            return True
-
-        return normalized.startswith(
-            (
-                "not specified",
-                "not available",
-                "no information",
-            )
+        return normalized in placeholders or normalized.startswith(
+            ("not specified", "not available", "no information")
         )
-
-    @staticmethod
-    def remove_empty_sections(text: str) -> str:
-        """Drop section headers with no substantive body."""
-
-        if not text:
-            return text
-
-        lines = text.split("\n")
-        blocks: list[tuple[str | None, list[str]]] = []
-        current_header: str | None = None
-        current_body: list[str] = []
-        preamble: list[str] = []
-
-        header_pattern = re.compile(
-            r"^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$",
-        )
-
-        def flush_block() -> None:
-            nonlocal current_header, current_body
-            if current_header is not None:
-                blocks.append((current_header, current_body))
-            elif current_body:
-                preamble.extend(current_body)
-            current_header = None
-            current_body = []
-
-        for line in lines:
-            match = header_pattern.match(line.strip())
-            if match and len(match.group(1)) <= 45:
-                flush_block()
-                current_header = match.group(1).strip()
-                rest = match.group(2).strip()
-                current_body = [rest] if rest else []
-            else:
-                if current_header is not None:
-                    current_body.append(line)
-                else:
-                    preamble.append(line)
-
-        flush_block()
-
-        output: list[str] = []
-
-        if preamble:
-            preamble_text = "\n".join(preamble).strip()
-            if preamble_text:
-                output.append(preamble_text)
-
-        for header, body_lines in blocks:
-            body = "\n".join(body_lines).strip()
-            if (
-                PromptEngineer._is_placeholder_content(body)
-                or not body
-            ):
-                continue
-            output.append(f"{header}:\n{body}")
-
-        return "\n\n".join(
-            block for block in output if block.strip()
-        ).strip()
-
-    # Section titles that must not appear without body content
-    _SECTION_TITLES = {
-        "definition",
-        "key characteristics",
-        "example",
-        "applications",
-        "algorithm",
-        "steps",
-        "pseudo code",
-        "pseudocode",
-        "time complexity",
-        "space complexity",
-        "explanation",
-        "objective",
-        "important notes",
-        "notes",
-        "note",
-        "comparison table",
-        "summary",
-        "overview",
-        "approach",
-        "advantages",
-        "disadvantages",
-        "key points",
-        "section",
-        "context",
-        "reference",
-    }
-
-    @staticmethod
-    def _is_section_title_line(line: str) -> str | None:
-        stripped = line.strip()
-        if not stripped:
-            return None
-
-        colon_match = re.match(
-            r"^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$",
-            stripped,
-        )
-        if colon_match and len(colon_match.group(1)) <= 45:
-            title = colon_match.group(1).strip()
-            rest = colon_match.group(2).strip()
-            if rest:
-                return None
-            if title.lower() in PromptEngineer._SECTION_TITLES:
-                return title
-            return title
-
-        plain = stripped.rstrip(":").strip()
-        if plain.lower() in PromptEngineer._SECTION_TITLES:
-            return plain
-
-        return None
 
     @staticmethod
     def remove_filler_text(text: str) -> str:
-        """Strip transition fluff and meaningless standalone labels."""
-
+        """Strip transition fluff while retaining structural content."""
         if not text:
             return text
 
@@ -863,289 +853,35 @@ Write the formatted answer now:
             r"from the (provided )?context,?\s*",
         )
 
-        junk_lines = {
-            "section",
-            "context",
-            "reference",
-            "note",
-            "notes",
-            "historically speaking",
-            "in essence",
-            "fundamentally",
-            "generally speaking",
-        }
-
         cleaned: list[str] = []
-
         for line in text.split("\n"):
-            stripped = line.strip()
-            if not stripped:
-                cleaned.append("")
+            updated = line.strip()
+            # Don't destroy Markdown tables or formatting lines
+            if updated.startswith("|") or updated.startswith("#"):
+                cleaned.append(line)
                 continue
 
-            lower = stripped.lower().rstrip(":")
-
-            if lower in junk_lines:
-                continue
-
-            if PromptEngineer._is_section_title_line(stripped):
-                cleaned.append(stripped)
-                continue
-
-            updated = stripped
             for pattern in filler_prefixes:
                 updated = re.sub(
-                    pattern,
-                    "",
-                    updated,
-                    flags=re.IGNORECASE,
+                    pattern, "", updated, flags=re.IGNORECASE
                 ).strip()
 
-            if updated:
-                cleaned.append(updated)
+            cleaned.append(updated if updated else line.strip())
 
         return "\n".join(cleaned)
 
     @staticmethod
-    def remove_standalone_empty_sections(text: str) -> str:
-        """Remove section headers not followed by substantive content."""
-
-        if not text:
-            return text
-
-        lines = text.split("\n")
-        output: list[str] = []
-        index = 0
-
-        while index < len(lines):
-            line = lines[index]
-            title = PromptEngineer._is_section_title_line(line)
-
-            if not title:
-                output.append(line)
-                index += 1
-                continue
-
-            body_lines: list[str] = []
-            cursor = index + 1
-
-            while cursor < len(lines):
-                peek = lines[cursor]
-                if not peek.strip():
-                    if body_lines:
-                        break
-                    cursor += 1
-                    continue
-
-                if PromptEngineer._is_section_title_line(peek):
-                    break
-
-                body_lines.append(peek)
-                cursor += 1
-
-            body = "\n".join(body_lines).strip()
-
-            if body and not PromptEngineer._is_placeholder_content(
-                body
-            ):
-                colon_match = re.match(
-                    r"^([A-Za-z][A-Za-z0-9 /&]+):\s*",
-                    line.strip(),
-                )
-                if colon_match:
-                    output.append(line)
-                else:
-                    output.append(f"{title}:")
-                output.extend(body_lines)
-                if cursor < len(lines) and not lines[cursor].strip():
-                    output.append("")
-
-            index = cursor
-
-        return "\n".join(output)
-
-    @staticmethod
-    def normalize_section_bullets(text: str) -> str:
-        """Ensure characteristic-style lines use bullet prefixes."""
-
-        if not text:
-            return text
-
-        bullet_sections = {
-            "key characteristics",
-            "advantages",
-            "disadvantages",
-            "key points",
-            "important notes",
-        }
-
-        lines = text.split("\n")
-        output: list[str] = []
-        current_section: str | None = None
-
-        for line in lines:
-            title = PromptEngineer._is_section_title_line(line)
-            if title:
-                current_section = title.lower()
-                output.append(line)
-                continue
-
-            stripped = line.strip()
-            if (
-                current_section in bullet_sections
-                and stripped
-                and not re.match(r"^(\d+\.|[-•*])\s+", stripped)
-                and not stripped.startswith("|")
-                and len(stripped.split()) <= 24
-            ):
-                output.append(f"- {stripped}")
-                continue
-
-            output.append(line)
-
-        return "\n".join(output)
-
-    @staticmethod
-    def renumber_ordered_steps(text: str) -> str:
-        """Renumber step lists after empty items were removed."""
-
-        if not text:
-            return text
-
-        lines = text.split("\n")
-        output: list[str] = []
-        counter = 0
-        in_steps = False
-
-        for line in lines:
-            title = PromptEngineer._is_section_title_line(line)
-            if title:
-                in_steps = title.lower() == "steps"
-                counter = 0
-                output.append(line)
-                continue
-
-            match = re.match(r"^\d+\.\s+(.+)$", line.strip())
-            if in_steps and match and match.group(1).strip():
-                counter += 1
-                output.append(f"{counter}. {match.group(1).strip()}")
-                continue
-
-            if match:
-                counter = 0
-
-            output.append(line)
-
-        return "\n".join(output)
-
-    @staticmethod
-    def flatten_rigid_template_headers(text: str) -> str:
-        """Turn worksheet-style headers into plain prose for conversational answers."""
-
-        if not text:
-            return text
-
-        if re.search(
-            r"(?im)^(algorithm|steps|comparison table|objective|procedure)\s*:",
-            text,
-        ):
-            return text
-
-        rigid = {
-            "definition",
-            "key characteristics",
-            "example",
-            "applications",
-            "key points",
-            "overview",
-        }
-
-        lines = text.split("\n")
-        output: list[str] = []
-
-        for line in lines:
-            match = re.match(
-                r"^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$",
-                line.strip(),
-            )
-            if match and match.group(1).strip().lower() in rigid:
-                rest = match.group(2).strip()
-                if rest:
-                    output.append(rest)
-                continue
-
-            plain = line.strip().rstrip(":")
-            if plain.lower() in rigid:
-                continue
-
-            output.append(line)
-
-        return "\n".join(output)
-
-    @staticmethod
-    def polish_answer(text: str) -> str:
-        """Final presentation pass before the answer is shown to the user."""
-
-        if not text:
-            return text
-
-        text = PromptEngineer.strip_markdown(text)
-        text = PromptEngineer.flatten_rigid_template_headers(text)
-        text = PromptEngineer.remove_filler_text(text)
-        text = PromptEngineer.remove_standalone_empty_sections(text)
-        text = PromptEngineer.fix_incomplete_steps(text)
-        # text = PromptEngineer.normalize_section_bullets(text)
-        text = PromptEngineer.remove_empty_sections(text)
-        text = PromptEngineer.renumber_ordered_steps(text)
-
-        # Collapse excessive blank lines
-        text = re.sub(r"\n{3,}", "\n\n", text)
-
-        # Remove duplicate non-empty lines
-        seen: set[str] = set()
-        deduped: list[str] = []
-
-        for line in text.split("\n"):
-            key = line.strip().lower()
-            if key and key in seen:
-                continue
-            if key:
-                seen.add(key)
-            deduped.append(line)
-
-        return "\n".join(deduped).strip()
-
-    @staticmethod
-    def fix_incomplete_steps(text: str) -> str:
-        """Remove empty numbered list items."""
-
-        if not text:
-            return text
-
-        cleaned: list[str] = []
-
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if re.match(r"^\d+\.\s*$", stripped):
-                continue
-            if re.match(r"^\d+\.\s*\.{2,}\s*$", stripped):
-                continue
-            cleaned.append(line)
-
-        return "\n".join(cleaned)
-
-    @staticmethod
-    def clean_response(
-        response: str,
-        question: str = "",
-    ) -> str:
-
+    def clean_response(response: str, question: str = "") -> str:
+        """Cleans structural output artifacts without destroying Markdown elements."""
         if not response:
             return response
 
         response = response.strip()
-        response = PromptEngineer.strip_markdown(response)
 
+        # Handle explicit escape characters safely
+        response = response.replace("\\n", "\n")
+
+        # Remove systemic prefixes text models use sometimes
         artifacts = [
             r"^Answer:\s*",
             r"^Response:\s*",
@@ -1160,266 +896,65 @@ Write the formatted answer now:
             r"^Here is (?:the |my )?(?:answer|response):?\s*",
             r"^Here'?s a rewritten response[^.]*\.?\s*",
             r"^This (?:answer|response) synthesizes[^.]*\.?\s*",
-            r"\[Generated.*?\]",
         ]
-
-        meta_line_patterns = [
-            r"(?im)^.*synthesizes the provided documents.*\n?",
-            r"(?im)^.*rewritten response.*\n?",
-        ]
-
-        for pattern in meta_line_patterns:
-            response = re.sub(pattern, "", response)
 
         for pattern in artifacts:
+            response = re.sub(pattern, "", response, flags=re.IGNORECASE)
 
-            response = re.sub(
-                pattern,
-                "",
-                response,
-                flags=re.IGNORECASE,
-            )
+        # Standardize conversational layout details
+        response = re.sub(r"\n{3,}", "\n\n", response)
 
-        response = re.sub(
-            r"[^\x00-\x7F]+",
-            " ",
-            response,
-        )
-
-        response = re.sub(
-            r"([!?.,])\1+",
-            r"\1",
-            response,
-        )
-
-        # Preserve paragraph breaks
-        response = re.sub(
-            r"\n{3,}",
-            "\n\n",
-            response,
-        )
-
-        # Clean up space within lines
-        lines = response.split("\n")
-        cleaned_lines = []
-
-        structured_line = re.compile(
-            r"^(\d+\.|[-•*]|\||[A-Z][a-zA-Z ]+:|#{1,3}\s)",
-        )
-
-        for line in lines:
-            line = re.sub(r"[ \t]+", " ", line)
-            line = line.strip()
-
-            if line:
-                cleaned_lines.append(line)
-
-        paragraphs = []
-        current_para = []
-
-        for line in cleaned_lines:
-            if structured_line.match(line):
-                if current_para:
-                    paragraphs.append("\n".join(current_para))
-                    current_para = []
-                paragraphs.append(line)
-            else:
-                current_para.append(line)
-
-        if current_para:
-            paragraphs.append("\n".join(current_para))
-
-        # Remove duplicate paragraphs
-        seen = set()
-        deduped_paragraphs = []
-
-        for para in paragraphs:
-            normalized = (
-                para.strip().lower()
-            )
-
-            if (
-                normalized
-                and normalized not in seen
-            ):
-
-                deduped_paragraphs.append(para)
-                seen.add(normalized)
-
-        response = "\n\n".join(
-            deduped_paragraphs
-        ).strip()
-
-        # Remove incomplete sentence endings
-        response = re.sub(
-            r"(and|or|because|since|therefore)\s*$",
-            "",
-            response,
-            flags=re.IGNORECASE,
-        )
-
+        # Remove standard polite closing scripts if present
         bad_endings = [
             "thank you",
             "thanks",
             "hope this helps",
-            "so there you have it",
-            "let me know",
-            "feel free to",
+            "let me know if you need anything else",
         ]
-
         for ending in bad_endings:
+            if response.lower().endswith(ending):
+                response = response[: -len(ending)].strip()
 
-            if (
-                response.lower().endswith(
-                    ending
-                )
-            ):
+        # Final pass matching clean presentation requirements
+        response = PromptEngineer.remove_filler_text(response)
 
-                response = response[
-                    : -len(ending)
-                ].strip()
-
-        # Cap unstructured essays only; keep full structured answers intact.
-        has_sections = bool(
-            re.search(
-                r"(?m)^[A-Z][A-Za-z0-9 /&]+:\s*$",
-                response,
-            )
-        )
-
-        # if not has_sections:
-        #     paragraphs = response.split("\n\n")
-        #     if len(paragraphs) > 6:
-        #         response = "\n\n".join(paragraphs[:6])
-
-        if (
-            response
-            and response[-1] not in ".!?"
-            and not response.endswith(":")
-        ):
-            response += "."
-
-        return PromptEngineer.polish_answer(response.strip())
-
-    # =========================================================
-    # NO ANSWER RESPONSE
-    # =========================================================
+        return response.strip()
+    
+        
 
     @staticmethod
-    def format_no_answer_response(
-        question: str,
-    ) -> str:
-
+    def format_no_answer_response(question: str) -> str:
+        # return "I could not find sufficient information about this topic in the uploaded documents."
         return (
-            "I could not find sufficient information about this topic in the uploaded documents."
+            "The requested information was not found in the uploaded documents."
         )
 
     @staticmethod
     def direct_answer_reminder() -> str:
-        return (
-            "Rewrite in your own words using the required plain-text format. "
-            "No markdown. No empty sections. "
-            "Do not copy source sentences. "
-            "Complete every numbered step. "
-            "Begin immediately with the formatted sections."
-        )
+        return "Provide a complete answer focusing on direct metrics, using standard clear Markdown style rules."
 
     @staticmethod
     def synthesis_reminder() -> str:
-        return (
-            "Synthesize all relevant context into a natural tutor-style explanation. "
-            "Use your own words. No verbatim copying. "
-            "If this is a follow-up, expand the same topic — do not say information is missing."
-        )
-
-    # =========================================================
-    # SOURCE EXTRACTION
-    # =========================================================
+        return "Synthesize information logically from your document contexts into coherent, bolded-header layout structures."
 
     @staticmethod
-    def extract_source_mention(
-        response: str,
-    ) -> str:
-
-        source_pattern = (
-            r"(?:Source|From|Reference):?\s*"
-            r"([^,\n]+(?:\.pdf|\.docx|\.txt|\.md))[^\n]*"
-        )
-
-        match = re.search(
-            source_pattern,
-            response,
-            re.IGNORECASE,
-        )
-
-        if match:
-
-            return (
-                match.group(1)
-                .strip()
-            )
-
-        return ""
-
-    # =========================================================
-    # CONTEXT SYNTHESIS SIGNALS
-    # =========================================================
+    def extract_source_mention(response: str) -> str:
+        source_pattern = r"(?:Source|From|Reference):?\s*([^,\n]+(?:\.pdf|\.docx|\.txt|\.md))[^\n]*"
+        match = re.search(source_pattern, response, re.IGNORECASE)
+        return match.group(1).strip() if match else ""
 
     @staticmethod
-    def build_context_synthesis_signal(
-        context_blocks: List[str],
-    ) -> str:
-        """Build synthesis signals for multi-source context."""
-        unique_sources = set()
-        for block in context_blocks:
-            # Extract source info from context
-            match = re.search(
-                r"DOCUMENT:\s*([^\n]+)",
-                block,
-            )
-            if match:
-                unique_sources.add(match.group(1).strip())
-
-        if len(unique_sources) <= 1:
-            return (
-                "Focus on a coherent "
-                "explanation from a single "
-                "perspective."
-            )
-
-        return (
-            "Multiple document passages are available. "
-            "Read all relevant passages, merge duplicate ideas, and produce ONE "
-            "coherent answer. Do not rely on only the first passage if others add value."
-        )
+    def build_context_synthesis_signal(context_blocks: List[str]) -> str:
+        if len(context_blocks) <= 1:
+            return "Use available context to provide a focused answer."
+        # return "Combine critical points across distinct contexts systematically using structured tables or headings."
+        return "Combine relevant information from multiple contexts into a coherent answer while following the required response format."
+    @staticmethod
+    def build_coherence_signal(context_blocks: List[str]) -> str:
+        return "Organize sections logically via standard Markdown syntax templates."
 
     @staticmethod
-    def build_coherence_signal(
-        context_blocks: List[str],
-    ) -> str:
-        """Build signals for answer coherence."""
-        block_count = len(context_blocks)
-
-        if block_count <= 1:
-            return "Provide a complete, focused answer."
-
-        return (
-            "Write 2-4 flowing paragraphs. "
-            "Stay on one topic; connect ideas naturally without rigid section labels."
-        )
-
-    @staticmethod
-    def build_continuation_signal(
-        conversation_history: Optional[List[dict]] = None,
-    ) -> str:
-        """Build signals for conversation continuity."""
-        if not conversation_history:
+    def build_continuation_signal(conversation_history: Optional[List[dict]] = None) -> str:
+        if not conversation_history or len(conversation_history) < 2:
             return ""
-
-        if len(conversation_history) < 2:
-            return ""
-
-        return (
-        "This is a follow-up question. Use recent conversation to understand "
-        "what topic the user is referring to and expand the explanation naturally."
-        )
+        return "Build seamlessly on past details, preserving stylistic continuity across messages."

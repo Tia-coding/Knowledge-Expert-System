@@ -1888,16 +1888,28 @@ tr:hover {
 .answer-table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
     font-size: 14px;
 }
 
 .answer-table th,
 .answer-table td {
     border: 1px solid #dbe5f0;
-    padding: 8px 10px;
+    padding: 12px 14px;
     text-align: left;
     vertical-align: top;
+
+    white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: normal;
 }
+
+.answer-table th:first-child,
+.answer-table td:first-child {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
 
 .answer-table th {
     background: #f4f8fc;

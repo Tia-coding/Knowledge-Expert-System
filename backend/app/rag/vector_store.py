@@ -148,8 +148,8 @@ class VectorStore:
         result = self.collection.query(
             query_embeddings=[embedding],
             n_results=max(
-                top_k * 12,
-                50,
+                top_k * 6,
+                25,
             ),
             include=[
                 "documents",
@@ -215,7 +215,7 @@ class VectorStore:
             reverse=True,
         )
 
-        return rows[: max(top_k * 2, 20)]
+        return rows[: max(top_k, 12)]
 
     # =========================================================
     # DOCUMENT SNIPPETS
@@ -289,6 +289,13 @@ class VectorStore:
             return True
 
         if len(text) < 60:
+            return True
+        
+        if re.search(
+            r"(sample\s+program|output\s*:|void\s+\w+\s*\()",
+            text,
+            re.IGNORECASE,
+        ):
             return True
 
         garbage_ratio = len(

@@ -526,12 +526,12 @@ const ANSWER_SECTION_TITLES = new Set([
   "important notes",
   "notes",
   "comparison table",
-  "summary",
-  "overview",
   "approach",
   "advantages",
   "disadvantages",
   "key points",
+  "features",
+  "characteristics",
 ]);
 
 const BULLET_SECTIONS = new Set([
@@ -546,15 +546,23 @@ const BULLET_SECTIONS = new Set([
 const FILLER_LINE_RE =
   /^(to illustrate|however|additionally|consequently|nevertheless|based on (the )?(provided )?(document )?context|according to (the )?(uploaded )?documents?),?\s*/i;
 
-const JUNK_LINES = new Set(["section", "context", "reference", "note"]);
+const JUNK_LINES = new Set([
+  "section",
+  "context",
+  "reference",
+  "note",
+  "notes",
+  "additional information",
+  "remarks",
+  "conclusion"
+]);
 
 function stripMarkdown(text) {
   return String(text || "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/__(.+?)__/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "");
+    .replace(/`([^`]+)`/g, "$1");
 }
 
 function parseSectionHeader(line) {
@@ -562,6 +570,20 @@ function parseSectionHeader(line) {
   if (!trimmed) {
     return null;
   }
+
+  const markdownHeading =
+    trimmed.match(/^#{1,6}\s+(.+)$/);
+
+  if (markdownHeading) {
+    const title = markdownHeading[1].trim();
+
+    return {
+      title,
+      rest: "",
+      key: title.toLowerCase()
+    };
+  }
+
 
   const colon = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$/);
   if (colon && colon[1].length <= 45) {
@@ -629,6 +651,18 @@ function preprocessAnswerDisplay(text) {
       continue;
     }
 
+    const lower = trimmed.toLowerCase();
+
+    if (
+      lower.startsWith("the table only includes") ||
+      lower.startsWith("the requested information was found") ||
+      lower.startsWith("the information was found") ||
+      lower.startsWith("based on the uploaded documents") ||
+      lower.startsWith("the above table")
+    ) {
+      continue;
+    }
+
     const header = parseSectionHeader(trimmed);
 
     if (header && header.rest) {
@@ -636,6 +670,13 @@ function preprocessAnswerDisplay(text) {
         output.push(`${header.title}:`);
         output.push(header.rest);
       }
+      continue;
+    }
+
+    if (
+      trimmed.toLowerCase() === "features" ||
+      trimmed.toLowerCase() === "characteristics"
+    ) {
       continue;
     }
 
@@ -731,6 +772,10 @@ function renderFormattedAnswer(text) {
     listType = null;
   }
 
+  closeList();
+  flushTable();
+  flushPseudoBlock();
+
   function flushTable() {
     if (!tableRows.length) {
       return;
@@ -752,7 +797,20 @@ function renderFormattedAnswer(text) {
     }
 
     const header = rows[0];
-    const body = rows.slice(1);
+
+    // Skip markdown separator row
+    const body =
+      rows.length > 1 &&
+      rows[1].every(cell => /^-+$/.test(cell.replace(/:/g, "")))
+        ? rows.slice(2)
+        : rows.slice(1);
+
+    if (
+      body.length === 0 ||
+      header.length < 2
+    ) {
+      return;
+    }
 
     parts.push('<div class="answer-table-wrap"><table class="answer-table">');
     parts.push(
@@ -781,7 +839,7 @@ function renderFormattedAnswer(text) {
 
     if (!trimmed) {
       closeList();
-      flushTable();
+      // flushTable();
       return;
     }
 
@@ -795,10 +853,7 @@ function renderFormattedAnswer(text) {
       }
     }
 
-    if (trimmed.includes("|") && trimmed.split("|").length >= 3) {
-      if (/^[\s|:-]+$/.test(trimmed.replace(/\|/g, ""))) {
-        return;
-      }
+    if (trimmed.startsWith("|")) {
       closeList();
       tableRows.push(trimmed);
       return;
@@ -824,7 +879,9 @@ function renderFormattedAnswer(text) {
       return;
     }
 
-    const plainSection = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&]+)$/);
+
+    const plainSection = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&()-]{2,80})$/);
+    
     if (
       plainSection &&
       ANSWER_SECTION_TITLES.has(plainSection[1].toLowerCase())

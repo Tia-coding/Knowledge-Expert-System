@@ -12,8 +12,8 @@ Offline secure RAG-based AI knowledge assistant with FastAPI, vanilla HTML/CSS/J
 - Table extraction using `pdfplumber`
 - Recursive chunking with chunk size `1000` and overlap `200`
 - Persistent ChromaDB vector store
-- Embedding model: `all-MiniLM-L6-v2`
-- Local Ollama model support: `phi3:mini` and `tinyllama`
+- Embedding model: `BAAI/bge-base-en-v1.5`
+- Local Ollama model support: `llama3`
 - Fully offline usage after packages, embedding model, and Ollama models are installed locally
 
 ## Default Credentials
@@ -23,3 +23,9 @@ Administrator:
 ```text
 username: admin
 password: admin123
+
+User:
+
+```text
+username: user
+password: user123

@@ -26,6 +26,5 @@ password: admin123
 
 User:
 
-```text
 username: user
 password: user123

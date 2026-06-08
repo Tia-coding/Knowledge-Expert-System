@@ -1,5 +1,6 @@
 import hashlib
 import logging
+from pydoc import text
 import re
 import pytesseract
 
@@ -833,9 +834,20 @@ def extract_document(
             f"[Page {page}]\n{text}"
         )
 
-        split_chunks = (
-            splitter.split_text(text)
+        sections = re.split(
+            r"\n(?=[A-Z][A-Za-z0-9 ]{2,50}\n)",
+            text
         )
+
+        if len(sections) > 1:
+            split_chunks = []
+
+            for section in sections:
+                split_chunks.extend(
+                    splitter.split_text(section)
+                )
+        else:
+            split_chunks = splitter.split_text(text)
 
         for idx, chunk in enumerate(
             split_chunks,

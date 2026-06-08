@@ -35,7 +35,8 @@ class VectorStore:
         )
 
         self.embedding_model = SentenceTransformer(
-            self.settings.embedding_model
+            self.settings.embedding_model,
+            local_files_only=True,
         )
 
     # =========================================================

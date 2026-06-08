@@ -14,10 +14,6 @@ class PromptEngineer:
         """Classify answer structure: structured only when the question needs it."""
         q = question.lower().strip()
 
-        # Explicit algorithm requests → structured
-        if re.search(r"\balgorithm\b", q) or "pseudocode" in q:
-            return "algorithm"
-
         # Comparisons → table format
         if any(
             phrase in q
@@ -34,6 +30,16 @@ class PromptEngineer:
             )
         ):
             return "comparison"
+
+        # Explicit structured procedure requests (Priority given to algorithmic step structures)
+        if re.search(
+            r"\b(algorithm|procedure|steps|workflow|methodology)\b",
+            q
+        ):
+            return "algorithm"
+
+        if "pseudocode" in q:
+            return "algorithm"
 
         # Clear procedures → structured steps
         if any(
@@ -132,9 +138,8 @@ class PromptEngineer:
 
         return (
             "Length target: Answer only what the question asks. "
-            "Provide additional sections such as characteristics, types, advantages, "
-            "disadvantages, applications, examples, or implementation details only "
-            "when they are relevant to the user's request."
+            "Include additional detail only when it is directly relevant "
+            "to the user's request and supported by the retrieved context."
         )
 
     @staticmethod
@@ -155,12 +160,12 @@ DOCUMENT GROUNDING:
     @staticmethod
     def anti_copy_rules() -> str:
         return """
-TUTORING & SYNTHESIS RULES:
+SYNTHESIS RULES:
 
-* Answer the user's question directly with educational clarity.
+* Answer the user's question directly and clearly.
 * Focus purely on the topic requested.
-* Explain concepts clearly in your own words while preserving technical accuracy.
-* Short technical definitions or exact values may be used directly when accuracy requires it.
+* Explain information in your own words while preserving factual accuracy.
+* Short definitions, names, dates, or exact values may be used directly when accuracy requires it.
 * Do not copy document sections verbatim.
 * Synthesize information from multiple retrieved passages.
 * Do not reproduce source headings exactly.
@@ -198,7 +203,7 @@ FORMATTING RULES:
 FORMATTING (STRUCTURED STYLE):
 - Use bullet points for comparisons unless the user explicitly requests a table.
 - Use ordered lists (1. Step one) for sequential workflows, processes, or algorithms.
-- Use code blocks (```python ... ``` or similar languages) for any technical code blocks or pseudocode snippets.
+- Use fenced code blocks only when the retrieved context contains code or structured technical notation relevant to the question.
 - Ensure all markdown elements are complete and well-formed.
 """
 
@@ -315,11 +320,15 @@ respond exactly:
     - It can be understood that
     - This means that
 unless they are necessary for clarity.
-11. Never output raw markdown examples, document fragments,
-    OCR artifacts, code snippets, or formatting remnants
-    unless the user explicitly requests them.
 
-12. Convert extracted content into natural language explanations.
+11. Never output raw markdown examples, document fragments,
+    OCR artifacts, or formatting remnants.
+
+12. When code or structured technical notation exists in the retrieved
+    context and is relevant to the user's question, render it using
+    proper fenced code blocks.
+
+13. Convert extracted content into natural language explanations.
 
 
 - When the user explicitly requests a table, generate a valid Markdown table with:
@@ -360,7 +369,7 @@ unless they are necessary for clarity.
 - Use clear markdown formatting.
 - When using a section title, always generate a valid Markdown heading using ##.
 - Never output plain text titles without Markdown heading syntax.
-- Use bullet points for collections, classifications, advantages, disadvantages, features, or comparisons.
+- Use bullet points for lists, key points, requirements, or comparisons when they improve readability.
 - Choose concise topic-based section titles only when necessary.
 - Avoid creating unnecessary headings for short answers.
 - Avoid generic headings such as "Answer", "List", "Details", or "Differences".
@@ -369,14 +378,23 @@ unless they are necessary for clarity.
 
     QUESTION INTENT RULES:
 
-Definition Questions:
-- Give a direct definition first.
-- Provide a brief explanation.
-- Do not include code, pseudocode, algorithms, implementation details, or lengthy examples unless explicitly requested.
+For definition questions:
+
+- Start with a direct definition.
+- Include only information necessary to understand the concept.
+- Include additional details only when they are strongly related to the definition and supported by retrieved content.
+- Avoid unrelated procedures, implementations, comparisons, applications, or complexity analysis unless explicitly requested.
 
 Explanation Questions:
-- Provide a detailed explanation.
-- Include structure, working, characteristics, types, examples, advantages, disadvantages, and applications when supported by the documents.
+- Provide a clear explanation of the requested topic.
+- Organize the answer using headings only when they improve readability.
+- Cover the major information available in the retrieved context that answers the question.
+- Include supporting details from the documents when they help answer the question.
+- Do not omit important information that is present in the retrieved context.
+- Include examples only if they significantly improve understanding.
+- Do not automatically include procedural steps, formulas, or code unless relevant to the question.
+- Do not generate Conclusion or Summary sections.
+- Prefer concise, well-organized sections over long unstructured paragraphs.
 
 Comparison Questions:
 - Always use a markdown comparison table when enough information exists.
@@ -404,14 +422,12 @@ Do NOT add generic statements such as:
 
     DEFINITION RULES:
 
-    - For questions beginning with "What is", "What are", "Define", or "Definition of":
-    * Start with a direct definition.
-    * Keep the first explanation concise.
-    * Do not automatically include types, advantages, disadvantages, applications,
-        examples, implementation details, or comparisons unless requested.
-    * Provide only the definition and a brief explanation.
-    * Do not include algorithms, pseudocode, source code, implementation examples, or detailed procedures unless explicitly requested.
-    * Do not include code snippets for "What is", "Define", or "Meaning of" questions.
+- Do NOT repeat the user's question.
+- Do NOT use the question as a heading.
+- Start directly with the definition.
+- Do NOT generate titles
+- Don't repeat questions in answers 
+- The first sentence must be the definition itself.
 
     RETRIEVED KNOWLEDGE:
     {context}
@@ -452,19 +468,40 @@ Do NOT add generic statements such as:
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an intelligent document-grounded AI assistant.{PromptEngineer.common_rules(conversational=False)}
+You are an intelligent document-grounded AI assistant.
+{PromptEngineer.common_rules(conversational=False)}
 
 PROCEDURE ANSWERING RULES:
-* Present steps as a numbered list.
-* Add short explanations where necessary.
-* Keep steps concise and easy to follow.
-* Put step titles in bold (e.g., "1. **Initialize System**: ...").
-* Keep things highly structural, functional, and organized.
+
+- Answer ONLY using the retrieved document context.
+- Focus strictly on the procedure, operation, workflow, algorithm, or process requested.
+- The answer MUST be a numbered list.
+- Every step MUST begin with:
+  1.
+  2.
+  3.
+  ...
+- Do not explain the procedure in paragraph form.
+- Do not generate introductory paragraphs.
+- Do not generate concluding paragraphs.
+- Start directly with Step 1.
+- End after the final step.
+- Each step must be concise and meaningful.
+- Add a short explanation only when it helps understand the step.
+- Do not add introductory paragraphs unless required by the context.
+- Do not generate definitions unless they are necessary to understand the procedure.
+- Do not generate examples unless explicitly present and essential in the retrieved content.
+- Do not generate advantages, disadvantages, applications, notes, conclusions, summaries, or additional sections.
+- Do not add time complexity, space complexity, implementation details, or code unless explicitly requested.
+- Do not create extra steps that are not supported by the retrieved document context.
+- If the document provides operation names with descriptions, format them as numbered items.
+- Preserve the logical order of steps exactly as described in the retrieved content.
+- Keep the response clean, structured, and focused on the requested procedure only.
 
 DOCUMENT CONTEXT:
 {context}
 
-Write the formatted answer now:
+ANSWER:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -493,16 +530,34 @@ Write the formatted answer now:
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an intelligent document-grounded AI assistant.{PromptEngineer.common_rules(conversational=False)}
+You are an intelligent document-grounded AI assistant.
+{PromptEngineer.common_rules(conversational=False)}
 
 ALGORITHM ANSWERING RULES:
-* Use explicit code markdown blocks (e.g., ```python) to display structured pseudocode or algorithmic implementations.
-* List operational bounds, parameters, or time/space complex metrics using clear Markdown bullet items.
+
+- Answer ONLY using the retrieved document context.
+- Focus strictly on the algorithm, workflow, or process requested.
+- Present the algorithm as a numbered sequence of steps.
+- Each step should describe a specific action in the correct execution order.
+- Keep steps concise and easy to follow.
+- Include conditions, iterations, or decision points only when supported by the retrieved context.
+- Do not generate introductory paragraphs unless required by the context.
+- Do not generate examples unless explicitly present and important in the retrieved content.
+- Do not generate advantages, disadvantages, applications, notes, summaries, or conclusions.
+- Do not automatically include time complexity or space complexity unless explicitly requested by the user or clearly present in the retrieved context.
+- Do not automatically include implementation details or programming code.
+- Use fenced code blocks only when actual code exists in the retrieved context.
+- Do not invent steps that are not supported by the retrieved documents.
+- Preserve the logical order of the algorithm exactly as described in the retrieved context.
+- If the retrieved content describes operations rather than an algorithm, present them as numbered operational steps.
+- Do not generate sample outputs.
+- Do not generate example executions.
+- Do not generate illustrative scenarios unless explicitly present in the retrieved context.
 
 DOCUMENT CONTEXT:
 {context}
 
-Write the formatted markdown answer now:
+ANSWER:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -525,33 +580,34 @@ Write the formatted markdown answer now:
         context = "\n\n".join(context_blocks)
 
         base = f"""
-You are an advanced AI assistant providing a clean structured list.
+You are an intelligent document-grounded AI assistant.
 {PromptEngineer.common_rules(conversational=False)}
 
 LIST ANSWERING RULES:
 
-* Present each item as a bullet point.
-* Add a short explanation when supported by the retrieved knowledge.
-* Do not introduce unsupported items.
-* Avoid repeating information across bullets.
-* Keep each bullet concise.
-* Do not add introductory paragraphs unless necessary.
-* Organize the list using a meaningful title when helpful.
-* Avoid generic headings.
-
-For list or types questions:
-
-- Return only the requested list and brief explanations.
-- Do not automatically continue into detailed subsections.
-- Do not expand each item into separate sections unless explicitly requested.
+- Answer ONLY using the retrieved document context.
+- Present items as a clean Markdown bullet list.
+- Include ALL relevant items found in the retrieved content.
+- Do not stop after the first item when multiple items exist.
+- Add a brief explanation for each item only when supported by the retrieved content.
+- Keep explanations concise and focused.
+- Avoid repeating information across list items.
+- Do not introduce unsupported items.
+- Do not generate introductory paragraphs unless necessary for understanding the list.
+- Do not generate detailed subsections for each item.
+- Do not expand items into separate sections unless explicitly requested.
+- Do not generate examples unless explicitly present and important in the retrieved content.
+- Do not generate advantages, disadvantages, applications, notes, summaries, conclusions, references, sources, or additional information sections.
 - Do not add source citations inside the answer body.
-- Do not generate sections such as:
-  - References
-  - Sources
-  - Notes
-  - Additional Information
-- End the answer after the final list item.
+- End the answer immediately after the final list item.
+- Do not generate introductory sentences before the list.
+- Do not generate concluding sentences after the list.
+- Start directly with the first list item.
 
+For "types", "categories", "kinds", "classifications", "operations", "features", or similar list-based questions:
+- Return only the requested items and their brief descriptions.
+- Preserve the order in which the items appear in the retrieved content whenever possible.
+- If the retrieved content contains numbered items, preserve that logical ordering.
 
 DOCUMENT CONTEXT:
 {context}
@@ -582,104 +638,35 @@ ANSWER:
 You are an intelligent document-grounded AI assistant.
 {PromptEngineer.common_rules(conversational=False)}
 
-COMPARISON RULES:
+COMPARISON ANSWERING RULES:
 
-- If the user requests a table, tabular form, comparison table, or markdown table:
-  * Return a valid GitHub-Flavored Markdown table.
-  * Use one header row.
-  * Use one separator row.
-  * Ensure every row has the same number of columns.
-  * Do not add blank lines inside the table.
-
-- Otherwise:
-  * Present differences as bullet points.
-  * Each bullet should describe one difference.
-  * Avoid long paragraphs.
-
-
-
-For comparison questions:
-
-- Generate ONLY a markdown table.
-- The first column must be "Feature".
-- The remaining columns must be the compared concepts.
-- Include all comparison points inside the table.
-- Do NOT generate sections such as:
-  - Characteristics
-  - Features
-  - Additional Notes
-  - Summary
-  - Conclusion
-- Do NOT generate bullet points outside the table.
-- End the answer immediately after the table.
-
-
-Never generate:
-- Note
-- Notes
-- Additional Information
-- Remarks
-- Conclusion
-
-unless the user explicitly requests them.
-
-COMPARISON OUTPUT RULES:
-
-- Return exactly one markdown table.
-- The response must begin with the table header.
-- The response must end at the last table row.
-- Do not generate:
-  - Notes
-  - Conclusions
-  - Summaries
-  - Characteristics
-  - Additional Information
-  - Remarks
-  - Explanatory paragraphs
-  - Bullet points
-
-Any content outside the table is invalid.
-
-
-IMPORTANT:
-
-Return ONLY a markdown table.
-
-The response must start with:
-
-| Feature |
-
-and must end at the last row of the table.
-
-Do not write any text before or after the table.
-
-COMPARISON FORMAT:
-
-When comparing two or more concepts, generate a markdown table.
-
-The first column must be named Feature.
-
-The remaining columns must use the actual concepts being compared from the user's question.
-
-Each subsequent row must describe one comparison criterion.
-
-Do not create tables with only two columns unless the source information genuinely contains only two fields.
-
-STRICT OUTPUT RULES:
-
-- Output ONLY a markdown table.
-- The first character of the response must be "|".
-- Do not write introductions.
-- Do not write explanations.
-- Do not write notes.
-- Do not write conclusions.
-- Do not write "Here is the markdown table".
-- Do not write any text before or after the table.
+- Answer ONLY using the retrieved document context.
+- When comparing two or more concepts, generate a valid GitHub-Flavored Markdown table.
+- The table must begin immediately without introductory text.
+- Do not generate phrases such as:
+  - "Here is the comparison"
+  - "The following table"
+  - "Comparison Table"
+  - "Note"
+  - "Summary"
+  - "Conclusion"
+  - "Additional Information"
+- Use exactly one header row and one separator row.
+- Ensure every row contains the same number of columns as the header.
+- The first column must be named "Feature".
+- Remaining columns must represent the concepts being compared.
+- Include ALL meaningful comparison points available in the retrieved content.
+- Keep cell values concise.
+- Do not merge multiple features into one row.
+- Do not create rows unsupported by the retrieved content.
+- Do not add source citations inside table cells.
+- Do not generate explanatory paragraphs before or after the table.
+- End the answer immediately after the final table row.
 
 DOCUMENT CONTEXT:
 {context}
 
-Write the formatted markdown answer now:
+ANSWER:
 """.strip()
 
         return PromptEngineer._append_prompt_sections(
@@ -776,11 +763,6 @@ Write the formatted markdown answer now:
         if not context_blocks:
             return PromptEngineer.format_no_answer_response(question)
 
-        q = question.lower().strip()
-        
-        # PRIORITY RULE: If the user is explicitly asking for a definition, force the brief conversational prompt
-        
-
         answer_type = PromptEngineer.detect_answer_type(question)
 
         builders = {
@@ -801,8 +783,6 @@ Write the formatted markdown answer now:
     @staticmethod
     def strip_markdown(text: str) -> str:
         """DEPRECATED DESTRUCTIVE STRIPPER - Preserves formatting markup now."""
-        # We return text unmodified here to prevent dropping critical bolding,
-        # lists, tables, and headers required by our frontend.
         return text
 
     @staticmethod
@@ -904,6 +884,12 @@ Write the formatted markdown answer now:
         # Standardize conversational layout details
         response = re.sub(r"\n{3,}", "\n\n", response)
 
+        response = re.sub(
+            r"(?i)\n*in summary[:,]?\s*",
+            "\n",
+            response
+        )
+
         # Remove standard polite closing scripts if present
         bad_endings = [
             "thank you",
@@ -918,13 +904,24 @@ Write the formatted markdown answer now:
         # Final pass matching clean presentation requirements
         response = PromptEngineer.remove_filler_text(response)
 
+        response = re.sub(
+            r"(?i)note that.*?$",
+            "",
+            response,
+            flags=re.MULTILINE,
+        )
+
+        response = re.sub(
+            r'^(what is|define|definition of)\s+.*?:\s*\n*',
+            '',
+            response,
+            flags=re.IGNORECASE
+        )
+
         return response.strip()
-    
-        
 
     @staticmethod
     def format_no_answer_response(question: str) -> str:
-        # return "I could not find sufficient information about this topic in the uploaded documents."
         return (
             "The requested information was not found in the uploaded documents."
         )
@@ -947,8 +944,8 @@ Write the formatted markdown answer now:
     def build_context_synthesis_signal(context_blocks: List[str]) -> str:
         if len(context_blocks) <= 1:
             return "Use available context to provide a focused answer."
-        # return "Combine critical points across distinct contexts systematically using structured tables or headings."
         return "Combine relevant information from multiple contexts into a coherent answer while following the required response format."
+
     @staticmethod
     def build_coherence_signal(context_blocks: List[str]) -> str:
         return "Organize sections logically via standard Markdown syntax templates."

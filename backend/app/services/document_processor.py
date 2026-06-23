@@ -365,10 +365,11 @@ def extract_document(path: Path, filename: str, document_type: str) -> Extractio
         raise ValueError("Unsupported document type")
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=600,         # Keeps chunks focused and memory efficient
-        chunk_overlap=200,      # FIXED: Increased overlap to prevent splitting bullet points or cutting lists in half
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
         separators=[
             "\n# ", "\n## ", "\n### ",
+            "\n#### ", "\n##### ",
             "\n[TABLE]", "\n[IMAGE_TEXT]", "\n```",
             "\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " ", ""
         ],
@@ -400,6 +401,10 @@ def extract_document(path: Path, filename: str, document_type: str) -> Extractio
             ):
                 continue
 
+            # Detect section headings for rich metadata
+            heading_match = re.search(r'^(#{1,5}\s+.*)$', chunk_content, re.MULTILINE)
+            section_heading = heading_match.group(1).strip() if heading_match else ""
+
             chunks.append(
                 ExtractedChunk(
                     text=chunk_content,
@@ -410,6 +415,9 @@ def extract_document(path: Path, filename: str, document_type: str) -> Extractio
                         "chunk_id": f"{path.stem}-p{page}-c{idx}",
                         "document_type": document_type,
                         "chunk_kind": classify_chunk_kind(chunk_content),
+                        "section_heading": section_heading,
+                        "chunk_index": idx,
+                        "total_chunks": len(split_chunks),
                     },
                 )
             )

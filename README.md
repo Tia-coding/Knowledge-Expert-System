@@ -1,26 +1,11 @@
 # NRSC Documents Knowledge Expert System
 
-## Project Overview
-
 The NRSC Documents Knowledge Expert System is an AI-powered document question-answering system developed during my internship at the National Remote Sensing Centre (NRSC), ISRO, Hyderabad.
 
 The project is based on Retrieval-Augmented Generation (RAG) and enables users to upload documents, index their contents, and interact with them using natural language queries. The system retrieves relevant information from uploaded documents and generates grounded responses using a locally hosted Large Language Model (LLM).
 
 The application is designed to work completely offline, ensuring data privacy and secure document processing.
 
----
-
-## Internship Details
-
-**Organization:** National Remote Sensing Centre (NRSC), ISRO, Hyderabad
-
-**Role:** AI Intern
-
-**Duration:** May 2026 – June 2026
-
-**Project:** Documents Knowledge Expert System
-
----
 
 ## Objectives
 
@@ -31,7 +16,6 @@ The application is designed to work completely offline, ensuring data privacy an
 * Reduce hallucinations through retrieval-based generation.
 * Provide a secure and fully offline AI solution.
 
----
 
 ## Features
 
@@ -72,7 +56,6 @@ The application is designed to work completely offline, ensuring data privacy an
 * Multi-document knowledge retrieval
 * Hallucination reduction through document grounding
 
----
 
 ## Technology Stack
 
@@ -108,7 +91,6 @@ The application is designed to work completely offline, ensuring data privacy an
 * Tesseract OCR
 * pdf2image
 
----
 
 ## Models Used
 
@@ -126,7 +108,7 @@ Used for generating natural language answers from retrieved document context whi
 
 Alternative models such as Phi-3 Mini and TinyLlama can also be configured.
 
----
+
 
 ## System Workflow
 
@@ -141,7 +123,7 @@ Alternative models such as Phi-3 Mini and TinyLlama can also be configured.
 9. The LLM generates a grounded response.
 10. Relevant source citations are displayed to the user.
 
----
+
 
 ## Supported File Formats
 
@@ -149,7 +131,7 @@ Alternative models such as Phi-3 Mini and TinyLlama can also be configured.
 * DOCX
 * TXT
 
----
+
 
 ## Project Structure
 
@@ -171,7 +153,7 @@ frontend/
 └── pages/
 ```
 
----
+
 
 ## How to Run
 
@@ -183,4 +165,3 @@ frontend/
 6. Open the frontend application.
 7. Upload documents and begin querying.
 
----

@@ -71,17 +71,20 @@ class VectorStore:
         if not texts:
             return
 
+        # Batch encode for performance
         embeddings = self.embedding_model.encode(
             texts,
             normalize_embeddings=True,
             show_progress_bar=False,
         ).tolist()
 
+        # Batch delete and add
         try:
             self.collection.delete(ids=ids)
         except Exception:
             pass
 
+        # ChromaDB handles large batches internally
         self.collection.add(
             ids=ids,
             documents=texts,
@@ -99,7 +102,6 @@ class VectorStore:
         if not query_terms or not text:
             return 0.0
         text_lower = text.lower()
-        # FIXED: Match the {2,} length constraint and allow numeric elements to capture technical code terms
         text_terms = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', text_lower))
         if not text_terms:
             return 0.0
@@ -112,7 +114,7 @@ class VectorStore:
             return []
 
         if self.count() == 0:
-            logger.warning("Search query processed against an empty vector collection store context.")
+            logger.warning("Search query processed against an empty vector collection.")
             return []
 
         embedding = self.embedding_model.encode(
@@ -120,7 +122,7 @@ class VectorStore:
             normalize_embeddings=True,
         ).tolist()[0]
 
-        # Fetch extra candidates for hybrid scoring
+        # Fetch moderate extra candidates for hybrid scoring
         fetch_k = max(top_k * 3, 20)
         result = self.collection.query(
             query_embeddings=[embedding],
@@ -136,7 +138,6 @@ class VectorStore:
         meta_list = metadatas[0] if metadatas else []
         dist_list = distances[0] if distances else []
 
-        # Unified extraction pattern to include numbers and 2-character keywords safely
         query_terms = {
             term
             for term in re.findall(r"\b[a-zA-Z0-9]{2,}\b", query.lower())
@@ -150,28 +151,23 @@ class VectorStore:
             if not text or not metadata:
                 continue
 
-            # FIXED: Perform text normalization once per iteration to optimize CPU performance
             clean_text = self._normalize_text(text)
             if self._is_noisy_text(clean_text):
                 continue
 
+            # Fast dedup using first 80 words as key
             words = re.findall(r"\w+", clean_text.lower())
             text_key = " ".join(words[:80])
             if text_key in seen_texts:
                 continue
-
             seen_texts.add(text_key)
 
-            # FIXED: Switch to absolute normalization for Cosine Distance space.
-            # This completely stops highly relevant chunks from getting their scores zeroed out.
             raw_dist = float(distance)
             semantic_score = max(0.0, min(1.0, 1.0 - raw_dist))
 
-            # Hybrid keyword boost
+            # Hybrid keyword boost (65/35 blend)
             keyword_score = self._hybrid_term_score(query_terms, clean_text)
-
-            # Blend: 80% semantic + 20% keyword
-            blended_confidence = semantic_score * 0.80 + keyword_score * 0.20
+            blended_confidence = semantic_score * 0.65 + keyword_score * 0.35
 
             rows.append({
                 "text": clean_text,
@@ -182,7 +178,7 @@ class VectorStore:
                 "keyword_score": round(keyword_score, 3),
             })
 
-        rows = sorted(rows, key=lambda item: item["confidence"], reverse=True)
+        rows.sort(key=lambda item: item["confidence"], reverse=True)
         return rows[:top_k]
 
     def get_document_snippets(self, document_id: int, limit: int = 10) -> list[dict[str, Any]]:
@@ -208,7 +204,7 @@ class VectorStore:
                 })
             return snippets
         except Exception:
-            logger.exception("Failed to retrieve snippets for document system analytics UI layers.")
+            logger.exception("Failed to retrieve snippets")
             return []
 
     def _normalize_text(self, text: str) -> str:
@@ -224,26 +220,19 @@ class VectorStore:
             or ch in "\n\t\r"
         )
 
-        # Remove markup remnants
         text = re.sub(r"<[^>]+>", " ", text)
-
-        # Remove markdown artifacts
         text = re.sub(r"\*{3,}", " ", text)
         text = re.sub(r"_{3,}", " ", text)
-
         text = text.strip()
-
         text = re.sub(r"\s+", " ", text)
 
         return text
 
     def _is_noisy_text(self, text: str) -> bool:
-        """
-        Detects damaged data. Retains structural lines and formulas
-        needed for algorithmic and technical data parsing.
-        """
-        if not text: return True
-        if len(text) < 25: return True
+        if not text:
+            return True
+        if len(text) < 25:
+            return True
 
         garbage_ratio = len(re.findall(r"[^a-zA-Z0-9\s.,!?():;\-\[\]|+=*/%<>&_$\"\'@#~]", text)) / max(len(text), 1)
         if garbage_ratio > 0.35:
@@ -253,9 +242,6 @@ class VectorStore:
             return True
 
         return False
-
-    def _current_year(self) -> int:
-        return datetime.now().year
 
     def count(self) -> int:
         try:

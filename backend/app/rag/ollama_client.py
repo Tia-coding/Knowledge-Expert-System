@@ -45,12 +45,12 @@ class OllamaClient:
             ],
             "stream": False,
             "options": {
-                "temperature": 0.15,
-                "top_p": 0.85,
-                "top_k": 40,
-                "repeat_penalty": 1.05,
+                "temperature": 0.35,
+                "top_p": 0.90,
+                "top_k": 50,
+                "repeat_penalty": 1.10,
                 "num_ctx": 8192,
-                "num_predict": 1024,
+                "num_predict": 2048,
                 "num_thread": 8
             }
         }
@@ -97,18 +97,18 @@ class OllamaClient:
             #     "num_thread": 8,
             # }
             "options": {
-                # FIXED: Raised from 0.15 to 0.35 to allow the model to write more naturally 
+                # Raised from 0.15 to 0.35 to allow the model to write more naturally
                 # and fully explain concepts using definitions + examples.
                 "temperature": 0.35,
                 "top_p": 0.90,
                 "top_k": 50,
                 
-                # FIXED: Balanced penalty constraints to prevent line repetition without truncating answers early
+                # Balanced penalty constraints to prevent line repetition without truncating answers early
                 "repeat_penalty": 1.10,
                 "presence_penalty": 0.0,
                 "frequency_penalty": 0.0,
                 
-                # FIXED: Extended generation window to ensure steps and tables finish writing completely
+                # Extended generation window to ensure steps and tables finish writing completely
                 "num_ctx": 8192,
                 "num_predict": 2048, 
                 "num_thread": 8

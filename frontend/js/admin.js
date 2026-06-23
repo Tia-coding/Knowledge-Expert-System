@@ -39,7 +39,6 @@ const ADMIN_SECTIONS = [
   "dashboard",
   "upload",
   "manage",
-  "knowledge",
   "logs",
 ];
 
@@ -1248,33 +1247,26 @@ if (fileSearch) {
 
 async function loadMetrics() {
 
-  const targetMetric =
-    document.querySelector(
-      "#totalDocuments"
-    );
-
-  if (!targetMetric) {
-    return;
-  }
-
   try {
 
-    const metrics =
-      await api("/metrics");
+    const metrics = await api("/metrics");
 
-    targetMetric.textContent =
-      metrics.total_documents !== undefined
-        ? metrics.total_documents
-        : 0;
+    document.querySelector("#totalDocuments").textContent =
+      metrics.total_documents || 0;
+
+    document.querySelector("#uploadedDocuments").textContent =
+      metrics.uploaded_documents || 0;
+
+    document.querySelector("#indexedDocuments").textContent =
+      metrics.indexed_documents || 0;
 
   } catch (error) {
 
-    console.error(
-      "Failed to load metrics:",
-      error
-    );
+    console.error("Failed to load metrics:", error);
 
-    targetMetric.textContent = "0";
+    document.querySelector("#totalDocuments").textContent = "0";
+    document.querySelector("#uploadedDocuments").textContent = "0";
+    document.querySelector("#indexedDocuments").textContent = "0";
 
   }
 

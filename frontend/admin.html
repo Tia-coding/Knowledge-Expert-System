@@ -6,12 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin Dashboard - NRSC</title>
   <link rel="stylesheet" href="/css/styles.css?v=20260520-2">
+
   <style>
     html {
       scroll-behavior: smooth;
     }
 
-    /* Single-page layout: all sections visible, vertical scroll */
     .admin-page .main {
       scroll-behavior: smooth;
     }
@@ -55,11 +55,11 @@
 
     <aside class="sidebar">
       <div class="title">NRSC Admin</div>
+
       <nav class="nav-items" aria-label="Admin dashboard sections">
         <a class="nav-item active" href="#dashboard" data-section="dashboard">Dashboard</a>
         <a class="nav-item" href="#upload" data-section="upload">Upload Documents</a>
         <a class="nav-item" href="#manage" data-section="manage">Manage Files</a>
-        <a class="nav-item" href="#knowledge" data-section="knowledge">AI Knowledge Base</a>
         <a class="nav-item" href="#logs" data-section="logs">Security Logs</a>
         <a class="nav-item" href="#" data-logout>Logout</a>
       </nav>
@@ -67,69 +67,107 @@
 
     <main class="main">
 
+      <!-- Dashboard -->
       <section id="dashboard" class="section">
+
         <div class="page-title-card">
           <div>
             <h1>Document Management System</h1>
-            <p class="muted">AI-powered offline RAG document intelligence platform</p>
+            <p class="muted">
+              AI-powered offline RAG document intelligence platform
+            </p>
           </div>
         </div>
+
         <div class="grid">
-          <div class="card metric">
-            <span class="metric-label">Total Documents</span>
-            <span id="totalDocuments" class="metric-value">0</span>
-            <span class="metric-help">Uploaded documents</span>
-          </div>
-          <div class="card metric">
-            <span class="metric-label">AI Vector Database</span>
-            <span id="vectorStatus" class="metric-value">Ready</span>
-            <span class="metric-help">ChromaDB indexing operational</span>
-          </div>
-          <div class="card metric">
-            <span class="metric-label">Knowledge System</span>
-            <span id="systemStatus" class="metric-value">Active</span>
-            <span class="metric-help">OCR + RAG + Local LLM running successfully</span>
-          </div>
-          <div class="card metric">
-            <span class="metric-label">Security Status</span>
-            <span id="securityStatus" class="metric-value">Secure</span>
-            <span class="metric-help">Authorized access enabled</span>
-          </div>
-        </div>
+
+  <div class="card metric">
+    <span class="metric-label">Total Documents</span>
+    <span id="totalDocuments" class="metric-value">0</span>
+    <span class="metric-help">All uploaded documents</span>
+  </div>
+
+  <div class="card metric">
+    <span class="metric-label">Uploaded Documents</span>
+    <span id="uploadedDocuments" class="metric-value">0</span>
+    <span class="metric-help">Awaiting indexing</span>
+  </div>
+
+  <div class="card metric">
+    <span class="metric-label">Indexed Documents</span>
+    <span id="indexedDocuments" class="metric-value">0</span>
+    <span class="metric-help">Ready for AI search</span>
+  </div>
+
+</div>
+
       </section>
 
+      <!-- Upload -->
       <section id="upload" class="section">
+
         <div class="card">
           <h2>Upload Confidential Documents</h2>
-          <p class="muted">Supported formats: PDF, DOCX, TXT, MD</p>
+
+          <p class="muted">
+            Supported formats: PDF, DOCX, TXT, MD
+          </p>
+
           <div id="uploadZone" class="upload-zone">
             <div>
               <p>Drag & Drop Files Here</p>
               <p>or Click to Browse Files</p>
-              <input id="fileInput" type="file" multiple accept=".pdf,.docx,.txt,.md" hidden>
+
+              <input
+                id="fileInput"
+                type="file"
+                multiple
+                accept=".pdf,.docx,.txt,.md"
+                hidden>
             </div>
           </div>
-          <div id="selectedFiles" class="selected-files muted">No files selected.</div>
-          <div class="btn-row upload-actions">
-            <button class="btn-primary" type="button" id="uploadBtn">Upload</button>
+
+          <div id="selectedFiles" class="selected-files muted">
+            No files selected.
           </div>
+
+          <div class="btn-row upload-actions">
+            <button class="btn-primary" type="button" id="uploadBtn">
+              Upload
+            </button>
+          </div>
+
           <div id="uploadProgress" class="progress">
             <span></span>
           </div>
         </div>
+
       </section>
 
+      <!-- Manage Files -->
       <section id="manage" class="section">
+
         <div class="card">
+
           <div class="section-head">
             <div>
               <h2>Uploaded Documents</h2>
-              <p class="muted">Review, open, download, and manage uploaded documents</p>
+              <p class="muted">
+                Review, open, download, and manage uploaded documents
+              </p>
             </div>
           </div>
-          <input id="fileSearch" class="wide-search" placeholder="Search documents..." type="text">
+
+          <input
+            id="fileSearch"
+            class="wide-search"
+            placeholder="Search documents..."
+            type="text">
+
           <div class="table-wrap">
+
             <table id="documentsTable">
+
               <thead>
                 <tr>
                   <th>ID</th>
@@ -142,37 +180,35 @@
                   <th>Action</th>
                 </tr>
               </thead>
+
               <tbody></tbody>
+
             </table>
+
           </div>
+
         </div>
+
       </section>
 
-      <section id="knowledge" class="section">
-        <div class="card">
-          <h2>AI Knowledge Base</h2>
-          <p class="muted">Offline RAG-powered document intelligence system</p>
-          <div class="status-row">
-            <strong>LLM Status:</strong>
-            <span id="llmStatus">Llama3 Local</span>
-          </div>
-          <div class="status-row">
-            <strong>Vector Database:</strong>
-            <span>ChromaDB Ready</span>
-          </div>
-        </div>
-      </section>
-
+      <!-- Security Logs -->
       <section id="logs" class="section">
+
         <div class="card">
+
           <div class="section-head">
             <div>
               <h2>Security Logs</h2>
-              <p class="muted">Latest security activities</p>
+              <p class="muted">
+                Latest security activities
+              </p>
             </div>
           </div>
+
           <div class="table-wrap">
+
             <table id="logsTable">
+
               <thead>
                 <tr>
                   <th>Activity</th>
@@ -181,22 +217,31 @@
                   <th>Timestamp</th>
                 </tr>
               </thead>
+
               <tbody></tbody>
+
             </table>
+
           </div>
+
           <div class="log-actions">
-            <button class="btn-danger" type="button" id="clearLogsBtn">Clear Logs</button>
+            <button class="btn-danger" type="button" id="clearLogsBtn">
+              Clear Logs
+            </button>
           </div>
+
         </div>
+
       </section>
 
     </main>
+
   </div>
 
   <div id="toast" class="toast"></div>
 
   <script src="/js/api.js?v=20260521-2"></script>
   <script src="/js/admin.js?v=20260521-3"></script>
-</body>
 
+</body>
 </html>

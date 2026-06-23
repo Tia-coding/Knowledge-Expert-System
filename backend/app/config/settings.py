@@ -6,10 +6,6 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
 
-    # =========================================================
-    # APPLICATION
-    # =========================================================
-
     app_name: str = (
         "NRSC Documents Knowledge Expert System"
     )
@@ -19,9 +15,6 @@ class Settings(BaseSettings):
     dspace_base_url: str = ""
 
     dspace_timeout: int = 10
-    # =========================================================
-    # SECURITY
-    # =========================================================
 
     secret_key: str = (
         "change-this-secret-key"
@@ -31,17 +24,9 @@ class Settings(BaseSettings):
 
     access_token_expire_minutes: int = 480
 
-    # =========================================================
-    # DATABASE
-    # =========================================================
-
     database_url: str = (
         "sqlite:///./backend/nrsc.db"
     )
-
-    # =========================================================
-    # STORAGE DIRECTORIES
-    # =========================================================
 
     upload_dir: str = "./backend/uploads"
 
@@ -49,43 +34,29 @@ class Settings(BaseSettings):
 
     log_dir: str = "./backend/logs"
 
-    # =========================================================
-    # EMBEDDING MODEL
-    # =========================================================
+    embedding_model: str = "BAAI/bge-base-en-v1.5"
 
-    embedding_model: str = (
-        "BAAI/bge-base-en-v1.5"
-    )
+    llm_provider: str = "ollama"
 
-    # =========================================================
-    # OLLAMA
-    # =========================================================
+    llm_model: str = "llama3.2:3b"
 
-    ollama_base_url: str = (
-        "http://localhost:11434"
-    )
+    llm_base_url: str = "http://localhost:11434"
 
-    ollama_model: str = "llama3.2:3b"
+    # VLLM SETTINGS
 
-    # =========================================================
-    # RAG SETTINGS
-    # =========================================================
+    # llm_provider: str = "vllm"
+
+    # llm_model: str = "meta-llama/Llama-3.2-3B-Instruct"
+
+    # llm_base_url: str = "http://localhost:8000/v1"
 
     rag_top_k: int = 8
 
-    chunk_size: int = 1400
+    chunk_size: int = 1200
 
     chunk_overlap: int = 250
 
-    # =========================================================
-    # FILE LIMITS
-    # =========================================================
-
     max_upload_mb: int = 100
-
-    # =========================================================
-    # PYDANTIC CONFIG
-    # =========================================================
 
     class Config:
 
@@ -94,10 +65,6 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
         case_sensitive = False
-
-    # =========================================================
-    # ENSURE REQUIRED DIRECTORIES
-    # =========================================================
 
     def ensure_dirs(self) -> None:
 
@@ -130,9 +97,6 @@ class Settings(BaseSettings):
 
                 )
 
-    # =========================================================
-    # VALIDATE IMPORTANT SETTINGS
-    # =========================================================
 
     def validate_settings(self) -> None:
 
@@ -161,20 +125,11 @@ class Settings(BaseSettings):
                 "smaller than chunk_size"
             )
 
-    # =========================================================
-    # INITIALIZATION
-    # =========================================================
-
     def initialize(self) -> None:
 
         self.ensure_dirs()
 
         self.validate_settings()
-
-
-# =============================================================
-# CACHED SETTINGS INSTANCE
-# =============================================================
 
 @lru_cache
 def get_settings() -> Settings:

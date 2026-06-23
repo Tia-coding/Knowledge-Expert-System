@@ -3,6 +3,9 @@ import re
 from functools import lru_cache
 from typing import Any
 
+import unicodedata
+from datetime import datetime
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
@@ -20,18 +23,12 @@ class VectorStore:
 
         self.client = chromadb.PersistentClient(
             path=self.settings.chroma_dir,
-            settings=ChromaSettings(
-                anonymized_telemetry=False  # Telemetry error successfully resolved here
-            ),
+            settings=ChromaSettings(anonymized_telemetry=False),
         )
 
-        self.collection = (
-            self.client.get_or_create_collection(
-                name="nrsc_documents",
-                metadata={
-                    "hnsw:space": "cosine"
-                },
-            )
+        self.collection = self.client.get_or_create_collection(
+            name="nrsc_documents",
+            metadata={"hnsw:space": "cosine"},
         )
 
         self.embedding_model = SentenceTransformer(
@@ -39,16 +36,11 @@ class VectorStore:
             local_files_only=True,
         )
 
-    # =========================================================
-    # ADD DOCUMENT CHUNKS
-    # =========================================================
-
     def add_document_chunks(
         self,
         document_id: int,
         chunks: list[ExtractedChunk],
     ) -> None:
-
         if not chunks:
             return
 
@@ -79,16 +71,13 @@ class VectorStore:
         if not texts:
             return
 
-        embeddings = (
-            self.embedding_model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            ).tolist()
-        )
+        embeddings = self.embedding_model.encode(
+            texts,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        ).tolist()
 
         try:
-            # Delete any existing chunks for clean overwrite synchronization
             self.collection.delete(ids=ids)
         except Exception:
             pass
@@ -100,74 +89,59 @@ class VectorStore:
             metadatas=metadatas,
         )
 
-        logger.info(
-            "Added %s chunks for document %s",
-            len(texts),
-            document_id,
-        )
+        logger.info("Added %s chunks for document %s", len(texts), document_id)
 
-    # =========================================================
-    # DELETE DOCUMENT
-    # =========================================================
+    def delete_document(self, document_id: int) -> None:
+        self.collection.delete(where={"document_id": document_id})
 
-    def delete_document(
-        self,
-        document_id: int,
-    ) -> None:
-        self.collection.delete(
-            where={
-                "document_id": document_id
-            }
-        )
+    def _hybrid_term_score(self, query_terms: set[str], text: str) -> float:
+        """Compute keyword overlap score for hybrid retrieval boosting."""
+        if not query_terms or not text:
+            return 0.0
+        text_lower = text.lower()
+        # FIXED: Match the {2,} length constraint and allow numeric elements to capture technical code terms
+        text_terms = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', text_lower))
+        if not text_terms:
+            return 0.0
+        overlap = len(query_terms.intersection(text_terms))
+        return overlap / max(len(query_terms), 1)
 
-    # =========================================================
-    # SEARCH
-    # =========================================================
-
-    def search(
-        self,
-        query: str,
-        top_k: int,
-    ) -> list[dict[str, Any]]:
-
+    def search(self, query: str, top_k: int) -> list[dict[str, Any]]:
         query = query.strip()
         if not query:
             return []
 
-        # Guard check against searching empty structural collections
         if self.count() == 0:
             logger.warning("Search query processed against an empty vector collection store context.")
             return []
 
-        embedding = (
-            self.embedding_model.encode(
-                [query],
-                normalize_embeddings=True,
-            ).tolist()[0]
-        )
+        embedding = self.embedding_model.encode(
+            [query],
+            normalize_embeddings=True,
+        ).tolist()[0]
 
+        # Fetch extra candidates for hybrid scoring
+        fetch_k = max(top_k * 3, 20)
         result = self.collection.query(
             query_embeddings=[embedding],
-            n_results=max(
-                top_k * 6,
-                25,
-            ),
-            include=[
-                "documents",
-                "metadatas",
-                "distances",
-            ],
+            n_results=fetch_k,
+            include=["documents", "metadatas", "distances"],
         )
 
-        # Enhanced fallback mapping extraction rules to safely bypass None types
         documents = result.get("documents") or [[]]
         metadatas = result.get("metadatas") or [[]]
         distances = result.get("distances") or [[]]
 
-        # Target list nesting checks
         doc_list = documents[0] if documents else []
         meta_list = metadatas[0] if metadatas else []
         dist_list = distances[0] if distances else []
+
+        # Unified extraction pattern to include numbers and 2-character keywords safely
+        query_terms = {
+            term
+            for term in re.findall(r"\b[a-zA-Z0-9]{2,}\b", query.lower())
+            if term not in ENGLISH_STOP_WORDS
+        }
 
         rows = []
         seen_texts = set()
@@ -176,68 +150,47 @@ class VectorStore:
             if not text or not metadata:
                 continue
 
+            # FIXED: Perform text normalization once per iteration to optimize CPU performance
             clean_text = self._normalize_text(text)
-
             if self._is_noisy_text(clean_text):
                 continue
 
-            text_key = clean_text[:500].lower().strip()
-
+            words = re.findall(r"\w+", clean_text.lower())
+            text_key = " ".join(words[:80])
             if text_key in seen_texts:
                 continue
 
             seen_texts.add(text_key)
 
-            # Cosine distance confidence calculations scaling boundary layers safely
-            semantic_score = max(
-                0.0,
-                min(
-                    1.0,
-                    1.0 - (float(distance) / 2.0),
-                ),
-            )
+            # FIXED: Switch to absolute normalization for Cosine Distance space.
+            # This completely stops highly relevant chunks from getting their scores zeroed out.
+            raw_dist = float(distance)
+            semantic_score = max(0.0, min(1.0, 1.0 - raw_dist))
+
+            # Hybrid keyword boost
+            keyword_score = self._hybrid_term_score(query_terms, clean_text)
+
+            # Blend: 80% semantic + 20% keyword
+            blended_confidence = semantic_score * 0.80 + keyword_score * 0.20
 
             rows.append({
                 "text": clean_text,
                 "metadata": metadata,
-                "confidence": round(
-                    semantic_score,
-                    3,
-                ),
-                "distance": round(
-                    float(distance),
-                    4,
-                ),
+                "confidence": round(blended_confidence, 3),
+                "distance": round(raw_dist, 4),
+                "semantic_score": round(semantic_score, 3),
+                "keyword_score": round(keyword_score, 3),
             })
 
-        rows = sorted(
-            rows,
-            key=lambda item: item["confidence"],
-            reverse=True,
-        )
+        rows = sorted(rows, key=lambda item: item["confidence"], reverse=True)
+        return rows[:top_k]
 
-        return rows[: max(top_k, 12)]
-
-    # =========================================================
-    # DOCUMENT SNIPPETS
-    # =========================================================
-
-    def get_document_snippets(
-        self,
-        document_id: int,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-
+    def get_document_snippets(self, document_id: int, limit: int = 10) -> list[dict[str, Any]]:
         try:
             result = self.collection.get(
-                where={
-                    "document_id": document_id
-                },
+                where={"document_id": document_id},
                 limit=limit,
-                include=[
-                    "documents",
-                    "metadatas",
-                ],
+                include=["documents", "metadatas"],
             )
 
             documents = result.get("documents") or []
@@ -245,81 +198,71 @@ class VectorStore:
             snippets = []
 
             for text, metadata in zip(documents, metadatas):
-                if not text:
-                    continue
-
+                if not text: continue
                 snippets.append({
                     "text": text[:1200],
                     "page": metadata.get("page", "-"),
-                    "file": metadata.get(
-                        "file",
-                        metadata.get("filename", "Unknown Document")
-                    ),
+                    "file": metadata.get("file", metadata.get("filename", "Unknown Document")),
                     "chunk_id": metadata.get("chunk_id"),
                     "document_type": metadata.get("document_type"),
                 })
-
             return snippets
-
         except Exception:
             logger.exception("Failed to retrieve snippets for document system analytics UI layers.")
             return []
 
-    # =========================================================
-    # NORMALIZATION
-    # =========================================================
+    def _normalize_text(self, text: str) -> str:
+        if not text:
+            return ""
 
-    def _normalize_text(
-        self,
-        text: str,
-    ) -> str:
+        text = unicodedata.normalize("NFKC", text)
+
+        text = "".join(
+            ch
+            for ch in text
+            if unicodedata.category(ch)[0] != "C"
+            or ch in "\n\t\r"
+        )
+
+        # Remove markup remnants
+        text = re.sub(r"<[^>]+>", " ", text)
+
+        # Remove markdown artifacts
+        text = re.sub(r"\*{3,}", " ", text)
+        text = re.sub(r"_{3,}", " ", text)
+
         text = text.strip()
+
         text = re.sub(r"\s+", " ", text)
-        text = re.sub(r"[^\x00-\x7F]+", " ", text)
+
         return text
 
-    # =========================================================
-    # OCR NOISE DETECTION
-    # =========================================================
+    def _is_noisy_text(self, text: str) -> bool:
+        """
+        Detects damaged data. Retains structural lines and formulas
+        needed for algorithmic and technical data parsing.
+        """
+        if not text: return True
+        if len(text) < 25: return True
 
-    def _is_noisy_text(
-        self,
-        text: str,
-    ) -> bool:
-        if not text:
+        garbage_ratio = len(re.findall(r"[^a-zA-Z0-9\s.,!?():;\-\[\]|+=*/%<>&_$\"\'@#~]", text)) / max(len(text), 1)
+        if garbage_ratio > 0.35:
             return True
 
-        if len(text) < 60:
-            return True
-        
-        if re.search(
-            r"(sample\s+program|output\s*:|void\s+\w+\s*\()",
-            text,
-            re.IGNORECASE,
-        ):
-            return True
-
-        garbage_ratio = len(
-            re.findall(
-                r"[^a-zA-Z0-9\s.,!?():;\-]",
-                text,
-            )
-        ) / max(len(text), 1)
-
-        if garbage_ratio > 0.18:
-            return True
-
-        if re.search(r"[^\s]{35,}", text):
+        if re.search(r"[^\s]{150,}", text):
             return True
 
         return False
 
-    # =========================================================
-    # COUNT
-    # =========================================================
+    def _current_year(self) -> int:
+        return datetime.now().year
 
     def count(self) -> int:
-        return self.collection.count()
+        try:
+            return self.collection.count()
+        except Exception:
+            logger.exception("Failed to count collection")
+            return 0
 
 
 @lru_cache

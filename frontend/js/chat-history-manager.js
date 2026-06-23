@@ -355,7 +355,7 @@ class ChatHistoryManager {
             <div class="bubble-meta">
               <span class="bubble-role">Assistant</span>
             </div>
-            <div class="bubble bubble-assistant">${renderFormattedAnswer(msg.answer || "")}</div>
+            <div class="bubble bubble-assistant">${renderFormattedAnswer(msg.answer || "", msg.question || "")}</div>
             ${sourceChips ? `<div class="bubble-sources">${sourceChips}</div>` : ""}
             <span class="bubble-time">${escapeHtml(time)}</span>
           </div>
@@ -510,434 +510,400 @@ function renderSourcesPanel(sourcesEl, sources) {
   });
 }
 
-const ANSWER_SECTION_TITLES = new Set([
-  "definition",
-  "key characteristics",
-  "pseudo code",
-  // "pseudocode",
-  "explanation",
-  "objective",
-  "important notes",
-  "notes",
-  "comparison table",
-  "approach",
-  "advantages",
-  "disadvantages",
-  "key points",
-  "features",
-  "characteristics",
-]);
+// ============================================================
+// IMPROVED MARKDOWN RENDERER
+// ============================================================
 
-const BULLET_SECTIONS = new Set([
-  "key characteristics",
-  "advantages",
-  "disadvantages",
-  "key points",
-  "important notes",
-  "notes",
-]);
+/**
+ * Renders markdown text to HTML with full support for:
+ * - Bold (**text**)
+ * - Italic (*text*)
+ * - Inline code (`code`)
+ * - Code blocks (```code```)
+ * - Tables (| col1 | col2 |)
+ * - Headings (## Heading)
+ * - Ordered lists (1. item)
+ * - Unordered lists (- item / * item)
+ * - Nested lists (indented)
+ * - Links ([text](url))
+ */
 
-const FILLER_LINE_RE =
-  /^(to illustrate|however|additionally|consequently|nevertheless|based on (the )?(provided )?(document )?context|according to (the )?(uploaded )?documents?),?\s*/i;
+function markdownToHtml(markdown) {
+  if (!markdown) return "";
 
-const JUNK_LINES = new Set([
-  "section",
-  "context",
-  "reference",
-  "note",
-  "notes",
-  "additional information",
-  "remarks",
-  "conclusion"
-]);
+  let html = markdown.replace(/\r\n/g, "\n");
 
-function stripMarkdown(text) {
-  return String(text || "")
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/\*(.+?)\*/g, "$1")
-    .replace(/`([^`]+)`/g, "$1");
-}
+  // Step 1: Extract and protect code blocks
+  const codeBlocks = [];
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push({ type: "block", lang, code: code.trim() });
+    return `%%CODEBLOCK_${idx}%%`;
+  });
 
-function parseSectionHeader(line) {
-  const trimmed = line.trim();
-  if (!trimmed) {
-    return null;
-  }
+  // Step 2: Extract and protect inline code
+  const inlineCodes = [];
+  html = html.replace(/`([^`]+)`/g, (match, code) => {
+    const idx = inlineCodes.length;
+    inlineCodes.push(code);
+    return `%%INLINECODE_${idx}%%`;
+  });
 
-  const markdownHeading =
-    trimmed.match(/^#{1,6}\s+(.+)$/);
+  // Step 3: Process tables (protect them from other transformations)
+  const tables = [];
+  html = html.replace(/(\|[^\n]*\|\s*\n)(?:\|[^\n]*\|[\s:|-]*\n)?(\|(?:[^\n]*\|[\s\S]*?)(?:\n|$))/gm, (match) => {
+    // Collect all consecutive table lines
+    const lines = match.split("\n").filter(l => l.trim().startsWith("|"));
+    if (lines.length < 2) return match;
+    const idx = tables.length;
+    tables.push(lines);
+    return `%%TABLE_${idx}%%`;
+  });
+  // Also catch tables that start with | immediately after a newline
+  html = html.replace(/((?:^|\n)\|[^\n]*\|\s*\n(?:\|[^\n]*\|\s*\n)+)/g, (match) => {
+    const lines = match.trim().split("\n").filter(l => l.trim().startsWith("|"));
+    if (lines.length < 2) return match;
+    const idx = tables.length;
+    tables.push(lines);
+    return `\n%%TABLE_${idx}%%`;
+  });
 
-  if (markdownHeading) {
-    const title = markdownHeading[1].trim();
+  // Step 4: Process headings (but not bold text that looks like headings)
+  html = html.replace(/^####\s+(.+)$/gm, '<h4 class="answer-heading">$1</h4>');
+  html = html.replace(/^###\s+(.+)$/gm, '<h3 class="answer-heading">$1</h3>');
+  html = html.replace(/^##\s+(.+)$/gm, '<h2 class="answer-heading">$1</h2>');
 
-    return {
-      title,
-      rest: "",
-      key: title.toLowerCase()
-    };
-  }
+  // Step 5: Process horizontal rules
+  html = html.replace(/^---+\s*$/gm, '<hr class="answer-hr">');
 
+  // Step 6: Convert markdown links to HTML
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="answer-link">$1</a>');
 
-  const colon = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&]+):\s*(.*)$/);
-  if (colon && colon[1].length <= 45) {
-    const title = colon[1].trim();
-    const rest = colon[2].trim();
-    return { title, rest, key: title.toLowerCase() };
-  }
-
-  const plain = trimmed.replace(/:$/, "").trim();
-  if (ANSWER_SECTION_TITLES.has(plain.toLowerCase())) {
-    return { title: plain, rest: "", key: plain.toLowerCase() };
-  }
-
-  return null;
-}
-
-function isPlaceholderContent(text) {
-  const normalized = String(text || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[.,;:]+$/, "");
-
-  if (!normalized) {
-    return true;
-  }
-
-  const exact = new Set([
-    "n/a",
-    "na",
-    "none",
-    "not available",
-    "not specified",
-    "not specified in the documents",
-    "not mentioned",
-    "no information",
-    "-",
-    "...",
-  ]);
-
-  if (exact.has(normalized)) {
-    return true;
-  }
-
-  return (
-    normalized.startsWith("not specified") ||
-    normalized.startsWith("not available") ||
-    normalized.startsWith("no information")
+  // Step 7: Convert bold and italic (BEFORE escaping HTML to preserve markdown syntax)
+  html = html.replace(
+    /\*\*([^*]+)\*\*/g,
+    '<strong>$1</strong>'
   );
-}
+  html = html.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
 
-function preprocessAnswerDisplay(text) {
-  const lines = stripMarkdown(text).split("\n");
-  const output = [];
+  // Step 8: Escape remaining HTML entities in non-code parts
+  // We need to escape but not in code blocks/tables/inline codes
+  // Temporarily replace protected tokens, escape, then restore
 
-  for (let index = 0; index < lines.length; index += 1) {
-    let line = lines[index];
+  
+
+  // Step 9: Process lists (ordered and unordered with nesting)
+  // First wrap each line in a list structure parser
+  const lines = html.split("\n");
+  const listHtml = [];
+  let inOrderedList = false;
+  let inUnorderedList = false;
+  let listStack = []; // Track nesting for nested lists
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Check for protected blocks
+    if (line.trim().startsWith("%%CODEBLOCK_") || line.trim().startsWith("%%TABLE_")) {
+      // Close any open lists
+      if (inOrderedList) { listHtml.push("</ol>"); inOrderedList = false; }
+      if (inUnorderedList) { listHtml.push("</ul>"); inUnorderedList = false; }
+      listHtml.push(line);
+      continue;
+    }
+
+    // Check for heading or hr
+    if (line.trim().startsWith("<h")) {
+      if (inOrderedList) { listHtml.push("</ol>"); inOrderedList = false; }
+      if (inUnorderedList) { listHtml.push("</ul>"); inUnorderedList = false; }
+      listHtml.push(line);
+      continue;
+    }
+
+    if (line.trim().startsWith("<hr")) {
+      if (inOrderedList) { listHtml.push("</ol>"); inOrderedList = false; }
+      if (inUnorderedList) { listHtml.push("</ul>"); inUnorderedList = false; }
+      listHtml.push(line);
+      continue;
+    }
+
+    // Check for empty line
+    if (!line.trim()) {
+      if (inOrderedList) { listHtml.push("</ol>"); inOrderedList = false; }
+      if (inUnorderedList) { listHtml.push("</ul>"); inUnorderedList = false; }
+      listHtml.push("");
+      continue;
+    }
+
+    // Determine indentation level for nesting
+    const indent = line.search(/\S/);
     const trimmed = line.trim();
 
-    if (!trimmed) {
-      output.push("");
-      continue;
-    }
+    // Ordered list: starts with number followed by period
+    const orderedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+    // Unordered list: starts with -, *, or •
+    const unorderedMatch = trimmed.match(/^[-*•]\s+(.+)$/);
 
-    if (JUNK_LINES.has(trimmed.toLowerCase().replace(/:$/, ""))) {
-      continue;
-    }
-
-    const lower = trimmed.toLowerCase();
-
-    if (
-      lower.startsWith("the table only includes") ||
-      lower.startsWith("the requested information was found") ||
-      lower.startsWith("the information was found") ||
-      lower.startsWith("based on the uploaded documents") ||
-      lower.startsWith("the above table")
-    ) {
-      continue;
-    }
-
-    const header = parseSectionHeader(trimmed);
-
-    if (header && header.rest) {
-      if (!isPlaceholderContent(header.rest)) {
-        output.push(`${header.title}:`);
-        output.push(header.rest);
+    if (orderedMatch) {
+      if (inUnorderedList) { listHtml.push("</ul>"); inUnorderedList = false; }
+      if (!inOrderedList) {
+        listHtml.push('<ol class="answer-list answer-list-ordered">');
+        inOrderedList = true;
       }
-      continue;
-    }
-
-    if (
-      trimmed.toLowerCase() === "features" ||
-      trimmed.toLowerCase() === "characteristics"
-    ) {
-      continue;
-    }
-
-    if (header && !header.rest) {
-      const body = [];
-      let cursor = index + 1;
-
-      while (cursor < lines.length) {
-        const peek = lines[cursor].trim();
-        if (!peek) {
-          if (body.length) {
-            break;
-          }
-          cursor += 1;
-          continue;
-        }
-        if (parseSectionHeader(peek)) {
-          break;
-        }
-        body.push(lines[cursor]);
-        cursor += 1;
+      listHtml.push(`<li>${orderedMatch[2].trim()}</li>`);
+    } else if (unorderedMatch) {
+      if (inOrderedList) { listHtml.push("</ol>"); inOrderedList = false; }
+      if (!inUnorderedList) {
+        listHtml.push('<ul class="answer-list">');
+        inUnorderedList = true;
       }
-
-      const bodyText = body.join("\n").trim();
-      if (bodyText && !isPlaceholderContent(bodyText)) {
-        output.push(`${header.title}:`);
-        output.push(bodyText);
+      listHtml.push(`<li>${unorderedMatch[1].trim()}</li>`);
+    } else {
+      // Regular paragraph
+      if (inOrderedList) { listHtml.push("</ol>"); inOrderedList = false; }
+      if (inUnorderedList) { listHtml.push("</ul>"); inUnorderedList = false; }
+      
+      // Check if this looks like a section heading with colon
+      const colonMatch = trimmed.match(/^(<strong>)?([A-Za-z][A-Za-z0-9 /&()\-]+)(<\/strong>)?:\s*(.*)$/);
+      if (colonMatch && colonMatch[2].length < 50 && colonMatch[4]) {
+        const title = colonMatch[2];
+        const rest = colonMatch[4]; // Recursively process the rest
+        listHtml.push(`<p class="answer-p"><strong>${title}:</strong> ${rest}</p>`);
+      } else if (trimmed.startsWith("%%INLINECODE_")) {
+        listHtml.push(`<p class="answer-p">${line}</p>`);
+      } else {
+        listHtml.push(`<p class="answer-p">${line}</p>`);
       }
-
-      index = cursor - 1;
-      continue;
-    }
-
-    const cleaned = trimmed.replace(FILLER_LINE_RE, "").trim();
-    if (cleaned) {
-      output.push(cleaned);
     }
   }
 
-  return output
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  // Close any remaining open lists
+  if (inOrderedList) listHtml.push("</ol>");
+  if (inUnorderedList) listHtml.push("</ul>");
+
+  html = listHtml.join("\n");
+
+  // Step 10: Restore code blocks
+  html = html.replace(/%%CODEBLOCK_(\d+)%%/g, (match, idx) => {
+    const block = codeBlocks[parseInt(idx)];
+    const lang = block.lang ? ` data-language="${escapeHtml(block.lang)}"` : "";
+    const code = escapeHtml(block.code);
+    return `<pre class="answer-code"><code${lang}>${code}</code></pre>`;
+  });
+
+  // Step 11: Restore inline code
+  html = html.replace(/%%INLINECODE_(\d+)%%/g, (match, idx) => {
+    const code = escapeHtml(inlineCodes[parseInt(idx)]);
+    return `<code class="answer-inline-code">${code}</code>`;
+  });
+
+  // Step 12: Restore tables
+  html = html.replace(/%%TABLE_(\d+)%%/g, (match, idx) => {
+    const lines = tables[parseInt(idx)];
+    return renderTableFromLines(lines);
+  });
+
+  // Step 13: Clean up - remove excessive blank lines between paragraphs
+  html = html.replace(/(<p class="answer-p">)\s*<\/p>/g, "");
+
+  return html;
 }
 
-function shouldAutoBullet(sectionKey, line) {
-  if (!BULLET_SECTIONS.has(sectionKey)) {
-    return false;
+/**
+ * Render markdown table lines to HTML table.
+ */
+function renderTableFromLines(lines) {
+  if (!lines || lines.length < 2) return "";
+
+  // Parse each line into cells
+  const rows = lines.map(line => {
+    return line
+      .split("|")
+      .map(cell => cell.trim())
+      .filter(cell => cell.length > 0);
+  }).filter(row => row.length >= 2);
+
+  if (rows.length < 2) return "";
+
+  const headerCells = rows[0];
+  
+  // Find the separator row (contains ---)
+  let separatorIdx = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].every(cell => /^:?-{3,}:?$/.test(cell))) {
+      separatorIdx = i;
+      break;
+    }
   }
 
-  if (/^(\d+\.|[-•*])\s+/.test(line)) {
-    return false;
+  // Determine the start of body data
+  const bodyStartIdx = separatorIdx > 0 ? separatorIdx + 1 : 1;
+  const bodyRows = rows.slice(bodyStartIdx);
+
+  if (bodyRows.length === 0) return "";
+
+  // Determine column alignments from separator
+  let alignments = [];
+  if (separatorIdx > 0) {
+    alignments = rows[separatorIdx].map(cell => {
+      if (/^:-+:$/.test(cell)) return ' style="text-align:center"';
+      if (/^:-+$/.test(cell)) return ' style="text-align:left"';
+      if (/:+$/.test(cell)) return ' style="text-align:right"';
+      return "";
+    });
   }
 
-  if (line.includes("|") || line.length > 160) {
-    return false;
-  }
+  let table = '<div class="answer-table-wrap"><table class="answer-table">';
+  
+  // Header
+  table += '<thead><tr>';
+  headerCells.forEach((cell, i) => {
+    table += `<th${alignments[i] || ""}>${escapeHtml(cell)}</th>`;
+  });
+  table += '</tr></thead>';
+  
+  // Body
+  table += '<tbody>';
+  bodyRows.forEach(row => {
+    table += '<tr>';
+    // Ensure we don't exceed header column count
+    for (let i = 0; i < Math.min(row.length, headerCells.length); i++) {
+      table += `<td${alignments[i] || ""}>${escapeHtml(row[i])}</td>`;
+    }
+    table += '</tr>';
+  });
+  table += '</tbody></table></div>';
 
-  return line.split(/\s+/).length <= 28;
+  return table;
 }
 
-function renderFormattedAnswer(text) {
+/**
+ * Clean answer text of filler phrases and prepare for markdown rendering.
+ */
+
+
+
+function removeRepeatedQuestion(answer, question) {
+  if (!answer || !question) return answer;
+
+  const normalizedAnswer = answer.trim().toLowerCase();
+  const normalizedQuestion = question.trim().toLowerCase();
+
+  if (
+    normalizedAnswer.startsWith(normalizedQuestion) ||
+    normalizedAnswer.startsWith(normalizedQuestion + "?") ||
+    normalizedAnswer.startsWith(normalizedQuestion + ":")
+  ) {
+    return answer.substring(question.length).trim();
+  }
+
+  return answer;
+}
+
+
+
+function preprocessAnswerDisplay(text) {
+  if (!text) return "";
+  
+  // Remove grounded filler lines
+  const fillerLines = [
+    /^based on (the )?(uploaded |provided )?documents?[^.]*\.?\s*$/im,
+    /^according to (the )?(uploaded |provided )?(notes|pdfs|materials|documents|text|context)[^.]*\.?\s*$/im,
+    /^retrieved information shows[^.]*\.?\s*$/im,
+    /^the document explains[^.]*\.?\s*$/im,
+    /^the (uploaded |provided )?documents (state|indicate|mention|contain|provide)[^.]*\.?\s*$/im,
+    /^from the (uploaded |provided )?context[^.]*\.?\s*$/im,
+    /^in essence,?\s*$/im,
+    /^from a high-level perspective,?\s*$/im,
+    /^it can be concluded,?\s*$/im,
+    /^therefore we can conclude,?\s*$/im,
+    /^the above discussion,?\s*$/im,
+    /^as discussed above,?\s*$/im,
+    /^here is (the )?(direct )?(answer|response):?\s*$/im,
+    /^the (direct )?(answer|response) is:?\s*$/im,
+    /^here is (a )?(brief )?(definition|explanation|comparison):?\s*$/im,
+    /^here are (some of )?(the )?(key )?(types|features|advantages|disadvantages|categories)?:?\s*$/im,
+    /^here is a list of[^:]*:?\s*$/im,
+    /^the following (is|are)[^:]*:?\s*$/im,
+    /^sure,? here is[^:]*:?\s*$/im,
+    /^certainly!?\s*$/im,
+    /^of course!?\s*$/im,
+    /^i'?d be happy to.*[.!]\s*$/im,
+    /^let me provide.*[.!]\s*$/im,
+    /^below is[^.]*\.?\s*$/im,
+  ];
+  
+  let lines = text.split("\n");
+  let cleaned = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    let skip = false;
+    
+    for (const pattern of fillerLines) {
+      if (pattern.test(trimmed)) {
+        skip = true;
+        break;
+      }
+    }
+    
+    if (!skip) {
+      cleaned.push(line);
+    }
+  }
+  
+  return cleaned.join("\n");
+}
+
+/**
+ * Render formatted answer with full markdown support.
+ */
+function renderFormattedAnswer(text, question = "") {
   if (!text) {
     return "";
   }
 
-  const lines = preprocessAnswerDisplay(text).split("\n");
-  const parts = [];
-  let listType = null;
-  let tableRows = [];
-  let pseudoLines = [];
-  let inPseudoSection = false;
-  let currentSectionKey = "";
+  // Clean filler text
+  let cleaned = preprocessAnswerDisplay(text);
 
-  function flushPseudoBlock() {
-    if (!pseudoLines.length) {
-      inPseudoSection = false;
-      return;
-    }
-    parts.push(
-      `<pre class="answer-code"><code>${escapeHtml(pseudoLines.join("\n").trim())}</code></pre>`
-    );
-    pseudoLines = [];
-    inPseudoSection = false;
+  // Remove repeated question if model echoes it
+  cleaned = removeRepeatedQuestion(
+    cleaned,
+    question
+  );
+
+  // Check if this is a "not found" response
+  const notFoundPatterns = [
+    "i'm sorry, but i couldn't find the information you're looking for",
+    "the requested information was not found in the uploaded documents",
+    "i couldn't find the information you're looking for",
+    "the information was not found",
+    "information was not found",
+  ];
+
+  const lowerText = cleaned.toLowerCase().trim();
+
+  const isNotFound = notFoundPatterns.some(
+    p => lowerText.startsWith(p) || lowerText === p
+  );
+
+  if (isNotFound) {
+    return `
+      <div class="answer-content answer-not-found">
+        <p>${escapeHtml(cleaned)}</p>
+      </div>
+    `;
   }
 
-  function closeList() {
-    if (listType === "ul") {
-      parts.push("</ul>");
-    } else if (listType === "ol") {
-      parts.push("</ol>");
-    }
-    listType = null;
-  }
+  // Convert markdown to HTML
+  const html = markdownToHtml(cleaned);
 
-  closeList();
-  flushTable();
-  flushPseudoBlock();
-
-  function flushTable() {
-    if (!tableRows.length) {
-      return;
-    }
-
-    const rows = tableRows
-      .map(row =>
-        row
-          .split("|")
-          .map(cell => cell.trim())
-          .filter(Boolean)
-      )
-      .filter(cells => cells.length >= 2);
-
-    tableRows = [];
-
-    if (!rows.length) {
-      return;
-    }
-
-    const header = rows[0];
-
-    // Skip markdown separator row
-    const body =
-      rows.length > 1 &&
-      rows[1].every(cell => /^-+$/.test(cell.replace(/:/g, "")))
-        ? rows.slice(2)
-        : rows.slice(1);
-
-    if (
-      body.length === 0 ||
-      header.length < 2
-    ) {
-      return;
-    }
-
-    parts.push('<div class="answer-table-wrap"><table class="answer-table">');
-    parts.push(
-      `<thead><tr>${header.map(cell => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead>`
-    );
-    parts.push("<tbody>");
-    body.forEach(cells => {
-      parts.push(
-        `<tr>${cells.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`
-      );
-    });
-    parts.push("</tbody></table></div>");
-  }
-
-  function emitSectionHeading(title) {
-    closeList();
-    flushTable();
-    flushPseudoBlock();
-    currentSectionKey = title.toLowerCase();
-    inPseudoSection = /pseudo\s*code/i.test(title);
-    parts.push(`<h4 class="answer-heading">${escapeHtml(title)}</h4>`);
-  }
-
-  lines.forEach(line => {
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      closeList();
-      // flushTable();
-      return;
-    }
-
-    if (inPseudoSection) {
-      const nested = parseSectionHeader(trimmed);
-      if (nested && !nested.rest) {
-        flushPseudoBlock();
-      } else if (!nested) {
-        pseudoLines.push(trimmed);
-        return;
-      }
-    }
-
-    if (trimmed.startsWith("|")) {
-      closeList();
-      tableRows.push(trimmed);
-      return;
-    }
-
-    if (tableRows.length) {
-      flushTable();
-    }
-
-    const section = parseSectionHeader(trimmed);
-    if (section && section.rest) {
-      emitSectionHeading(section.title);
-      if (inPseudoSection) {
-        pseudoLines.push(section.rest);
-      } else {
-        parts.push(`<p class="answer-p">${escapeHtml(section.rest)}</p>`);
-      }
-      return;
-    }
-
-    if (section && !section.rest) {
-      emitSectionHeading(section.title);
-      return;
-    }
-
-
-    const plainSection = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&()-]{2,80})$/);
-    
-    if (
-      plainSection &&
-      ANSWER_SECTION_TITLES.has(plainSection[1].toLowerCase())
-    ) {
-      emitSectionHeading(plainSection[1]);
-      return;
-    }
-
-    const numberedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
-    if (numberedMatch && numberedMatch[2].trim()) {
-      if (listType !== "ol") {
-        closeList();
-        parts.push('<ol class="answer-list answer-list-ordered">');
-        listType = "ol";
-      }
-      parts.push(`<li>${escapeHtml(numberedMatch[2].trim())}</li>`);
-      return;
-    }
-
-    let bulletText = null;
-    const bulletMatch = trimmed.match(/^[-•*]\s+(.+)$/);
-    if (bulletMatch) {
-      bulletText = bulletMatch[1].trim();
-    } else if (shouldAutoBullet(currentSectionKey, trimmed)) {
-      bulletText = trimmed;
-    }
-
-    if (bulletText) {
-      if (listType !== "ul") {
-        closeList();
-        parts.push('<ul class="answer-list">');
-        listType = "ul";
-      }
-      parts.push(`<li>${escapeHtml(bulletText)}</li>`);
-      return;
-    }
-
-    if (
-      inPseudoSection ||
-      /^(for|while|if|else|return|def |function |procedure )/i.test(trimmed) ||
-      (trimmed.endsWith(";") && trimmed.length < 140)
-    ) {
-      closeList();
-      if (inPseudoSection) {
-        pseudoLines.push(trimmed);
-      } else {
-        parts.push(
-          `<pre class="answer-code"><code>${escapeHtml(trimmed)}</code></pre>`
-        );
-      }
-      return;
-    }
-
-    closeList();
-    parts.push(`<p class="answer-p">${escapeHtml(trimmed)}</p>`);
-  });
-
-  closeList();
-  flushTable();
-  flushPseudoBlock();
-
-  return `<div class="answer-content">${parts.join("")}</div>`;
+  return `
+    <div class="answer-content">
+      ${html}
+    </div>
+  `;
 }
 
 function shortFileName(fileName) {
@@ -952,10 +918,7 @@ function shortFileName(fileName) {
 }
 
 function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  const el = document.createElement("div");
+  el.textContent = String(value || "");
+  return el.innerHTML;
 }

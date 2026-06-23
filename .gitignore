@@ -1,27 +1,10 @@
-# Python
+venv/
 .venv/
+node_modules/
+backend/.env
+backend/logs/
+backend/chroma_db/
+backend/uploads/
+backend/nrsc.db
 __pycache__/
 *.pyc
-
-# Logs
-*.log
-logs/
-
-# Databases
-*.db
-*.sqlite3
-
-# Chroma
-chroma_db/
-
-# Uploads
-uploads/
-
-# Environment
-.env
-
-# Node
-node_modules/
-
-# VSCode
-.vscode/

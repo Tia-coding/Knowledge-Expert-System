@@ -1832,6 +1832,17 @@ tr:hover {
     gap: 10px;
 }
 
+.answer-not-found {
+    display: block;
+}
+
+.answer-not-found p {
+    color: var(--muted);
+    font-style: italic;
+    margin: 0;
+    line-height: 1.6;
+}
+
 .answer-heading {
     margin: 14px 0 4px;
     font-size: 14px;
@@ -1922,16 +1933,64 @@ tr:hover {
 }
 
 .answer-code {
-    margin: 4px 0;
-    padding: 10px 12px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    margin: 8px 0;
+    padding: 14px 16px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
     overflow-x: auto;
-    font-family: Consolas, "Courier New", monospace;
+    font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
     font-size: 13px;
-    line-height: 1.5;
-    white-space: pre-wrap;
+    line-height: 1.6;
+    white-space: pre;
+    color: #e2e8f0;
+    tab-size: 4;
+}
+
+.answer-code code {
+    background: transparent;
+    color: #e2e8f0;
+    padding: 0;
+    border: none;
+    font-size: 13px;
+    white-space: pre;
+}
+
+.answer-inline-code {
+    background: #f1f5f9;
+    color: #be123c;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-family: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+    border: 1px solid #e2e8f0;
+    white-space: nowrap;
+}
+
+.answer-hr {
+    border: none;
+    border-top: 2px solid #e2e8f0;
+    margin: 16px 0;
+}
+
+.answer-link {
+    color: #2563eb;
+    text-decoration: underline;
+    word-break: break-all;
+}
+
+.answer-link:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+
+strong {
+    font-weight: 700;
+    color: #0f172a;
+}
+
+em {
+    font-style: italic;
 }
 
 .bubble-thinking {

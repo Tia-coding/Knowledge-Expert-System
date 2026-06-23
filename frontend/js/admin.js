@@ -4,6 +4,7 @@ const state = {
   documents: [],
   selectedFiles: [],
 };
+let documentStatusTimer = null;
 
 /* =========================================================
    ELEMENTS
@@ -761,6 +762,42 @@ async function loadDocuments() {
     renderDocuments(
       state.documents
     );
+
+    const hasPendingDocuments =
+      state.documents.some(
+        doc =>
+          doc.status === "Uploaded" ||
+          doc.status === "Processing"
+      );
+
+    if (
+      hasPendingDocuments &&
+      !documentStatusTimer
+    ) {
+
+      documentStatusTimer =
+        setInterval(
+          loadDocuments,
+          3000
+        );
+
+    }
+
+    if (
+      !hasPendingDocuments &&
+      documentStatusTimer
+    ) {
+
+      clearInterval(
+        documentStatusTimer
+      );
+
+      documentStatusTimer = null;
+
+      loadMetrics()
+        .catch(console.error);
+
+    }
 
   } catch (error) {
 

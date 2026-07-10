@@ -24,6 +24,8 @@ class AskRequest(BaseModel):
 class Source(BaseModel):
     file: str
     page: str | int | None = None
+    #Added document_id
+    document_id: int | None = None
     confidence: float | None = None
 
 

@@ -4,9 +4,11 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config.settings import get_settings
 from app.database.init_db import init_db
-from app.routes import auth, documents, rag, system
+#Added public_chat
+from app.routes import auth, documents, rag, system, public_chat
 from app.utils.logging import configure_logging
-
+#Added path
+from pathlib import Path
 
 import logging
 
@@ -35,6 +37,10 @@ app = FastAPI(
     title=settings.app_name,
     version="1.0.0"
 )
+#Added for tesitng
+@app.get("/hello")
+async def hello():
+    return {"message": "Hello NRSC"}
 
 # CORS middleware
 app.add_middleware(
@@ -50,14 +56,41 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(rag.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
+#Added public_chat
+app.include_router(public_chat.router, prefix="/api")
 
-# Serve frontend files
+#Added for testing
+import os
+
+print("Current Working Directory:", os.getcwd())
+print("Frontend exists:", os.path.exists("frontend"))
+print("Widget exists:", os.path.exists("frontend/widget-demo.html"))
+
+from fastapi.responses import FileResponse
+
+@app.get("/widget-demo-test")
+async def widget_demo_test():
+    return FileResponse("frontend/widget-demo.html")
+
+# Added Serve frontend files
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+FRONTEND_DIR = BASE_DIR / "frontend"
+
+print("Frontend directory:", FRONTEND_DIR)
+
 app.mount(
     "/",
-    StaticFiles(directory="frontend", html=True),
-    name="frontend"
+    StaticFiles(
+        directory=str(FRONTEND_DIR),
+        html=True,
+    ),
+    name="frontend",
 )
-
+print("\n========== REGISTERED ROUTES ==========")
+for route in app.routes:
+    print(route.path)
+print("=======================================\n")
 
 
 

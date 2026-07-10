@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 NOT_FOUND = "I'm sorry, but I couldn't find the information you're looking for in the uploaded documents. Please try rephrasing your question or ask about a different topic."
 
+GENERAL_KNOWLEDGE_MESSAGE = (
+    "I couldn't find enough information about this in the uploaded documents."
+)
 
 class RAGService:
 
@@ -52,22 +55,42 @@ class RAGService:
                 if keyword_query and keyword_query != primary_query:
                     search_results = self.vector_store.search(keyword_query, requested_top_k * 3)
 
+            #Added (changing to incorporate LLM answers along with source based answers)
             if not search_results:
-                return {"answer": NOT_FOUND, "sources": [], "confidence": 0.0}
-
+                return await self._general_knowledge_response(
+                    question=question,
+                    model=model,
+                    message=GENERAL_KNOWLEDGE_MESSAGE
+                )
             # Rank results with term-aware scoring
             ranked_results = self._rank_results(question, search_results, conversation_history)
 
             # Select diverse chunks
             relevant_chunks = self._select_best_chunks_mmr(ranked_results, question)
+
+            #Added this to optimize the answer
+            if not self._is_context_relevant(question, relevant_chunks):
+
+                return await self._general_knowledge_response(
+                    question=question,
+                    model=model,
+                    message=GENERAL_KNOWLEDGE_MESSAGE
+                )
+            
+            #Added (changing to incorporate LLM answers along with source based answers)
             if not relevant_chunks:
-                return {"answer": NOT_FOUND, "sources": [], "confidence": 0.0}
+                return await self._general_knowledge_response(
+                    question=question,
+                    model=model,
+                    message=GENERAL_KNOWLEDGE_MESSAGE
+                )
+
 
             # Build context with source-tagged blocks
             context_blocks, sources = self._build_context(relevant_chunks)
-            if not context_blocks:
-                return {"answer": NOT_FOUND, "sources": [], "confidence": 0.0}
-
+            #Added specifically to show only 5 sources
+            sources = sources[:5]
+            
             context_blocks = self._synthesize_context_blocks(context_blocks)
             if len(context_blocks) > 1:
                 context_blocks = self._group_context_by_similarity(context_blocks)
@@ -89,19 +112,21 @@ class RAGService:
             # Post-process
             answer = self._post_process_answer(answer, question)
 
+        #Added to trigger LLM answer
+            if self._is_not_found_response(answer):
+                    return await self._general_knowledge_response(
+                        question=question,
+                        model=model,
+                        message=GENERAL_KNOWLEDGE_MESSAGE
+                    )
+            
             # Verify answer uses chunk content
             answer_terms = self._terms(answer)
             chunk_terms = set()
             for chunk in relevant_chunks:
                 chunk_terms.update(self._terms(chunk.get("text", "")))
 
-            supported_ratio = (
-                len(answer_terms.intersection(chunk_terms)) / max(len(answer_terms), 1)
-            )
-
-            if supported_ratio < 0.05 and not self._is_not_found_response(answer) and len(answer_terms) > 5:
-                return {"answer": NOT_FOUND, "sources": [], "confidence": 0.0}
-
+            
             # Filter sources: ONLY return sources whose chunks were actually used in the answer
             sources = self._filter_sources_by_answer_usage(answer, relevant_chunks, sources, question)
             if self._is_not_found_response(answer):
@@ -175,15 +200,17 @@ class RAGService:
                     for i in range(len(question_words) - window_size + 1):
                         phrase = ' '.join(question_words[i:i+window_size])
                         if phrase in text_lower:
-                            phrase_boost = max(phrase_boost, 0.15)
+                    #Added changed 0.15->0.25
+                            phrase_boost = max(phrase_boost, 0.25)
                             break
                     if phrase_boost > 0:
                         break
 
             # Term overlap gets highest weight for technical accuracy
             final_score = (
-                semantic_score * 0.25 +        # semantic similarity
-                coverage * 0.40 +               # term coverage (highest weight for accuracy)
+    #Added changed 0.25 → 0.20 and 0.40->0.45
+                semantic_score * 0.20 +        # semantic similarity
+                coverage * 0.45 +               # term coverage (highest weight for accuracy)
                 min(exact_matches / 2, 1.0) * 0.20 +  # exact term matches
                 phrase_boost                    # phrase matches
             )
@@ -478,6 +505,37 @@ class RAGService:
                 seen_fingerprints.add(fingerprint)
                 selected.append(row)
         return selected
+    
+    #Added helper function
+    def _is_context_relevant(self, question: str, chunks: list[dict]) -> bool:
+        """
+        Returns True only if retrieved chunks contain
+        meaningful overlap with the user's question.
+        """
+
+        if not chunks:
+            return False
+
+        question_terms = self._terms(question)
+
+        if len(question_terms) < 2:
+            return True
+
+        best_overlap = 0.0
+
+        for chunk in chunks:
+
+            chunk_terms = self._terms(chunk.get("text", ""))
+
+            if not chunk_terms:
+                continue
+
+            overlap = len(question_terms.intersection(chunk_terms))
+            overlap_ratio = overlap / len(question_terms)
+
+            best_overlap = max(best_overlap, overlap_ratio)
+
+        return best_overlap >= 0.45
 
     def _max_context_chunks(self, question: str) -> int:
         word_count = len(question.split())
@@ -510,6 +568,8 @@ class RAGService:
             metadata = row.get("metadata", {}) or {}
             filename = metadata.get("filename") or metadata.get("file") or "Unknown Document"
             page = metadata.get("page", "-")
+            #Added document_id to identify page no.
+            document_id = metadata.get("document_id")
             chunk_id = metadata.get("chunk_id", "")
             score = float(row.get("final_score", row.get("confidence", 0.0)))
 
@@ -524,6 +584,8 @@ class RAGService:
                 sources_map[source_key] = {
                     "file": filename,
                     "page": str(page),
+                #Added document_id
+                    "document_id": document_id,
                     "confidence": round(score, 3),
                     "texts": [text],
                     "chunk_count": 0
@@ -543,6 +605,8 @@ class RAGService:
             sources.append({
                 "file": info["file"],
                 "page": info["page"],
+            #Added document_id
+                "document_id": info["document_id"],
                 "confidence": info["confidence"],
                 "chunk_count": info["chunk_count"],
             })
@@ -598,7 +662,8 @@ class RAGService:
                 filtered.append(source)
 
         # If no sources pass filtering (narrow answer), return top sources anyway
-        return filtered[:8] if filtered else sources[:8]
+        #Added changed from 8->5
+        return filtered[:5] if filtered else sources[:5]
 
     def _looks_like_raw_chunk(self, text: str) -> bool:
         if not text:
@@ -613,26 +678,90 @@ class RAGService:
         words = clean_string.split()
         return {w for w in words if w not in ENGLISH_STOP_WORDS and len(w) > 1}
 
+    #Added change to include the LLM answers
     def _is_not_found_response(self, answer: str) -> bool:
+
         if not answer:
             return True
-        normalized = answer.strip().lower()
+
+        normalized = answer.lower().strip()
+
         not_found_phrases = [
+
             "the requested information was not found in the uploaded documents",
+
             "i'm sorry, but i couldn't find the information you're looking for in the uploaded documents",
+
             "i couldn't find the information you're looking for",
+
             "the information was not found",
+
             "information was not found",
+
             "i cannot find",
+
             "i couldn't find",
+
             "does not contain",
+
             "doesn't contain",
+
             "no information",
+
+            "not mentioned",
+
+            "not available",
+
         ]
-        return (
-            normalized in not_found_phrases
-            or any(normalized.startswith(phrase[:30]) for phrase in not_found_phrases)
+
+        return any(
+            phrase in normalized
+            for phrase in not_found_phrases
         )
+    #Made a common function to be used
+    async def _general_knowledge_response(
+        self,
+        question: str,
+        model: str | None,
+        message: str,
+    ) -> dict:
+
+            fallback_prompt = f"""
+        You are an intelligent AI assistant.
+
+        The uploaded documents do not contain enough information to answer the user's question.
+
+        Answer ONLY using your general knowledge.
+
+        Instructions:
+
+        - Give a direct answer first.
+        - Be concise but complete.
+        - Use bullet points when helpful.
+        - Avoid saying "As of my knowledge cutoff..."
+        - Avoid saying "I don't know" unless absolutely necessary.
+        - If the information may have changed after your training, briefly mention that.
+        - Write in a professional tone.
+
+        Question:
+        {question}
+        """
+
+            llm_answer = await self.ollama.generate(
+                prompt=fallback_prompt,
+                model=model
+            )
+
+            return {
+                "answer": (
+                    message
+                    + "\n\n"
+                    + "However, I can still help by answering your question using my own general knowledge.\n\n"
+                    + llm_answer
+                ),
+                "sources": [],
+                "confidence": 0.0,
+            }
 
     def _chunk_fingerprint(self, text: str) -> str:
         words = re.findall(r"[a-zA-Z0-9_]+", text.lower())

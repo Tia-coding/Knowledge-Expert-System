@@ -167,7 +167,16 @@ class VectorStore:
 
             # Hybrid keyword boost (65/35 blend)
             keyword_score = self._hybrid_term_score(query_terms, clean_text)
-            blended_confidence = semantic_score * 0.65 + keyword_score * 0.35
+            #Added here
+            phrase_bonus = 0.0
+
+            query_lower = query.lower()
+            text_lower = clean_text.lower()
+
+            if query_lower in text_lower:
+                phrase_bonus = 0.20
+#Added changed ratio to 60/25
+            blended_confidence = semantic_score * 0.60 + keyword_score * 0.25 + phrase_bonus
 
             rows.append({
                 "text": clean_text,

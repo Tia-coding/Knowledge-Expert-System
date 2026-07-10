@@ -1,0 +1,352 @@
+/*NEW*/
+.nrsc-launcher {
+
+    position: fixed;
+
+    bottom: 25px;
+
+    right: 25px;
+
+    width: 65px;
+
+    height: 65px;
+
+    border-radius: 50%;
+
+    background: #0d47a1;
+
+    color: white;
+
+    display: flex;
+
+    justify-content: center;
+
+    align-items: center;
+
+    font-size: 28px;
+
+    cursor: pointer;
+
+    user-select: none;
+
+    box-shadow: 0 10px 25px rgba(0,0,0,.25);
+
+    transition: all .3s ease;
+
+    z-index: 99999;
+
+}
+
+.nrsc-launcher:hover {
+
+    transform: scale(1.08);
+
+}
+/*Chart Panel*/
+.nrsc-panel {
+
+    position: fixed;
+
+    bottom: 100px;
+
+    right: 25px;
+
+    width: 380px;
+
+    height: 520px;
+
+    background: white;
+
+    display: none;
+
+    flex-direction: column;
+
+    border-radius: 18px;
+
+    overflow: hidden;
+
+    box-shadow: 0 15px 40px rgba(0,0,0,.22);
+
+    transition: all .3s ease;
+
+    animation: widgetFade .25s ease;
+
+    z-index: 99999;
+
+}
+
+@keyframes widgetFade {
+
+    from {
+
+        opacity: 0;
+
+        transform: translateY(20px);
+
+    }
+
+    to {
+
+        opacity: 1;
+
+        transform: translateY(0);
+
+    }
+
+}
+/*Header*/
+.nrsc-header {
+
+    height: 60px;
+
+    background: #0d47a1;
+
+    color: white;
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    padding: 16px;
+
+    font-size: 17px;
+
+    font-weight: 600;
+
+}
+
+.nrsc-buttons {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 6px;
+
+}
+
+.nrsc-buttons button {
+
+    border: none;
+
+    background: transparent;
+
+    color: white;
+
+    cursor: pointer;
+
+    font-size: 18px;
+
+    transition: .2s;
+
+}
+
+.nrsc-buttons button:hover {
+
+    transform: scale(1.15);
+
+}
+
+/* Maximized Chat Window */
+
+.nrsc-panel.nrsc-maximized {
+
+    position: fixed;
+
+    inset: 0;
+
+    width: 100vw;
+
+    height: 100vh;
+
+    max-width: none;
+
+    max-height: none;
+
+    border-radius: 0;
+
+    z-index: 999999;
+
+}
+.nrsc-messages {
+
+    flex: 1;
+
+    overflow-y: auto;
+
+    padding: 18px;
+
+    display: flex;
+
+    flex-direction: column;
+
+}
+.nrsc-input-area {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 10px;
+
+    padding: 15px;
+
+    border-top: 1px solid #ddd;
+
+    background: white;
+
+    flex-shrink: 0;
+
+    margin-top: auto;
+
+}
+.nrsc-input-area input {
+
+    flex: 1;
+
+    padding: 12px;
+
+    border: 1px solid #ccc;
+
+    border-radius: 8px;
+
+    font-size: 15px;
+
+}
+
+.nrsc-input-area button {
+
+    padding: 12px 22px;
+
+    border: none;
+
+    border-radius: 8px;
+
+    background: #0d47a1;
+
+    color: white;
+
+    cursor: pointer;
+
+    font-weight: bold;
+
+}
+.assistant-message {
+
+    align-self: flex-start;
+
+    background: #f4f6f8;
+
+    color: #222;
+
+    padding: 12px 16px;
+
+    margin: 8px 0;
+
+    border-radius: 14px;
+
+    max-width: 75%;
+
+    word-wrap: break-word;
+
+    line-height: 1.5;
+
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+
+}
+.user-message {
+
+    align-self: flex-end;
+
+    background: #0d47a1;
+
+    color: white;
+
+    padding: 12px 16px;
+
+    margin: 8px 0;
+
+    border-radius: 14px;
+
+    max-width: 75%;
+
+    word-wrap: break-word;
+
+    line-height: 1.5;
+
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+
+}
+.assistant-sources{
+
+    display:flex;
+
+    flex-wrap:wrap;
+
+    gap:8px;
+
+    margin-top:12px;
+
+}
+
+.nrsc-source-chip{
+
+    background:#ffffff;
+
+    border:1px solid #d7dbe7;
+
+    border-radius:20px;
+
+    padding:8px 14px;
+
+    font-size:13px;
+
+    color:#174EA6;
+
+    cursor:pointer;
+
+    transition:all .2s ease;
+
+    white-space:nowrap;
+
+}
+
+.nrsc-source-chip:hover{
+
+    background:#eef4ff;
+
+    border-color:#4a90e2;
+
+    transform:translateY(-1px);
+
+}
+
+.source-item{
+
+    margin-bottom:12px;
+
+    padding:10px;
+
+    background:#f7f7f7;
+
+    border-radius:8px;
+
+}
+
+.source-item a{
+
+    color:#0d47a1;
+
+    font-weight:bold;
+
+    text-decoration:none;
+
+}
+
+.source-item a:hover{
+
+    text-decoration:underline;
+
+}

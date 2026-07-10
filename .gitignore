@@ -1,10 +1,55 @@
+# -----------------------------
+# Python Virtual Environments
+# -----------------------------
 venv/
 .venv/
-node_modules/
-backend/.env
-backend/logs/
-backend/chroma_db/
-backend/uploads/
-backend/nrsc.db
+rag_env/
+
+# -----------------------------
+# Python Cache
+# -----------------------------
 __pycache__/
 *.pyc
+*.pyo
+
+# -----------------------------
+# Environment Variables
+# -----------------------------
+backend/.env
+
+# -----------------------------
+# Logs
+# -----------------------------
+backend/logs/
+*.log
+
+# -----------------------------
+# Chroma Vector Database
+# -----------------------------
+backend/chroma_db/
+
+# -----------------------------
+# Uploaded Documents
+# -----------------------------
+backend/uploads/
+
+# -----------------------------
+# Local SQLite Database
+# -----------------------------
+backend/nrsc.db
+backend/backend/
+# -----------------------------
+# Node Modules (if ever used)
+# -----------------------------
+node_modules/
+
+# -----------------------------
+# VS Code
+# -----------------------------
+.vscode/
+
+# -----------------------------
+# Operating System Files
+# -----------------------------
+.DS_Store
+Thumbs.db

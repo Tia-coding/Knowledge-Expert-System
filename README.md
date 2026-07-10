@@ -209,6 +209,7 @@ This design minimizes deployment effort when integrating the chatbot into differ
 * TXT
 
 # Project Structure
+'''text
 Knowledge-Expert-System/
 │
 ├── backend/
@@ -236,7 +237,7 @@ Knowledge-Expert-System/
 │
 ├── README.md
 └── .gitignore
-
+'''
 ## How to Run
 
 1. Install Python dependencies.

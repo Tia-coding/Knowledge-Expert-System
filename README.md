@@ -1,11 +1,27 @@
-# NRSC Documents Knowledge Expert System
+# Knowledge Expert System (RAG)
 
-The NRSC Documents Knowledge Expert System is an AI-powered document question-answering system developed during my internship at the National Remote Sensing Centre (NRSC), ISRO, Hyderabad.
+A configurable Retrieval-Augmented Generation (RAG) based Knowledge Expert System developed during my internship at the National Remote Sensing Centre (NRSC), ISRO, Hyderabad.
 
-The project is based on Retrieval-Augmented Generation (RAG) and enables users to upload documents, index their contents, and interact with them using natural language queries. The system retrieves relevant information from uploaded documents and generates grounded responses using a locally hosted Large Language Model (LLM).
+The system enables semantic document retrieval, grounded question answering, and reusable chatbot integration for digital library websites.
 
-The application is designed to work completely offline, ensuring data privacy and secure document processing.
+# AI Capabilities
+## Reusable Chatbot Widget
 
+The project includes a configurable chatbot widget that can be embedded into multiple digital library websites with minimal code changes.
+
+### Widget Features
+
+- Floating chatbot interface
+- Responsive design
+- Minimize / Maximize support
+- Source citation chips
+- Direct PDF page navigation
+- Configurable API endpoints
+- Reusable frontend component
+- Plug-and-play integration
+* General knowledge fallback for out-of-context questions
+* Clickable document source references
+* Configurable widget for external library websites
 
 ## Objectives
 
@@ -136,6 +152,41 @@ http://127.0.0.1:8000/admin.html
 ```
 http://127.0.0.1:8000/widget-demo.html
 ```
+# Widget Integration
+
+The chatbot widget has been designed as a reusable frontend component.
+
+Files required for integration:
+
+```
+frontend/widget/
+    nrsc-assistant.js
+    nrsc-assistant.css
+```
+
+To integrate the widget into another website:
+
+1. Copy the widget folder.
+2. Include the CSS and JavaScript files.
+3. Configure the backend API endpoints.
+4. Initialize the widget.
+
+Only the API configuration needs to be updated for a new deployment. No backend code changes are required.
+
+# Configuration
+
+The widget is configurable through a single configuration object.
+
+Example:
+
+- Backend API URL
+- Chat endpoint
+- Document endpoint
+- Widget title
+- Default LLM model
+
+This design minimizes deployment effort when integrating the chatbot into different digital library systems.
+
 ## System Workflow
 
 1. User uploads documents.
@@ -157,29 +208,34 @@ http://127.0.0.1:8000/widget-demo.html
 * DOCX
 * TXT
 
-
-
-## Project Structure
-
-```text
-backend/
+# Project Structure
+Knowledge-Expert-System/
 │
-├── app/
-│   ├── config/
-│   ├── models/
-│   ├── rag/
-│   ├── routes/
-│   ├── services/
-│   └── utils/
+├── backend/
+│   ├── app/
+│   │   ├── config/
+│   │   ├── models/
+│   │   ├── rag/
+│   │   ├── routes/
+│   │   ├── schemas/
+│   │   ├── services/
+│   │   └── utils/
+│   │
+│   ├── requirements.txt
+│   └── .env.example
 │
-frontend/
+├── frontend/
+│   ├── css/
+│   ├── js/
+│   ├── widget/
+│   │   ├── nrsc-assistant.js
+│   │   └── nrsc-assistant.css
+│   │
+│   ├── admin.html
+│   └── widget-demo.html
 │
-├── css/
-├── js/
-└── pages/
-```
-
-
+├── README.md
+└── .gitignore
 
 ## How to Run
 

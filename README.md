@@ -108,8 +108,34 @@ Used for generating natural language answers from retrieved document context whi
 
 Alternative models such as Phi-3 Mini and TinyLlama can also be configured.
 
+## Running the Project
 
+### Backend
 
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+Backend runs on
+
+```
+http://127.0.0.1:8000
+```
+---
+
+### Admin Dashboard
+
+```
+http://127.0.0.1:8000/admin.html
+```
+---
+
+### Widget Demo
+
+```
+http://127.0.0.1:8000/widget-demo.html
+```
 ## System Workflow
 
 1. User uploads documents.

@@ -34,6 +34,11 @@ class Settings(BaseSettings):
 
     log_dir: str = "./backend/logs"
 
+    #Added for source and processed folder to be configureable
+    source_folder: str = ""
+
+    processed_folder: str = ""
+
     embedding_model: str = "BAAI/bge-base-en-v1.5"
 
     llm_provider: str = "ollama"
@@ -59,8 +64,8 @@ class Settings(BaseSettings):
     max_upload_mb: int = 100
 
     class Config:
-
-        env_file = "./backend/.env"
+#Added changed from "./backend/.env" to ".env"
+        env_file = ".env"
 
         env_file_encoding = "utf-8"
 
@@ -123,6 +128,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "chunk_overlap must be "
                 "smaller than chunk_size"
+            )
+        #Added for source and processed folders
+        from pathlib import Path
+
+        if self.source_folder and not Path(self.source_folder).exists():
+            raise ValueError(
+                f"Source folder does not exist: {self.source_folder}"
+            )
+
+        if self.processed_folder and not Path(self.processed_folder).exists():
+            raise ValueError(
+                f"Processed folder does not exist: {self.processed_folder}"
             )
 
     def initialize(self) -> None:

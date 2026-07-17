@@ -129,7 +129,17 @@ class Document(Base):
         default=indian_time,
         onupdate=indian_time,
     )
-
+    #Added processed time
+    processed_at = Column(
+    DateTime(timezone=True),
+    nullable=True,
+)
+    #Added storage_path
+    storage_path = Column(
+    String(500),
+    nullable=True,
+)
+    
 
 class ChatHistory(Base):
     __tablename__ = "chat_history"

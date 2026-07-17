@@ -4,6 +4,9 @@ import mimetypes
 import re
 import time
 from pathlib import Path
+#Added imports for time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import (
     APIRouter,
@@ -49,6 +52,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Documents"])
 settings = get_settings()
+#Added function for time zone
+def indian_time():
+    return datetime.now(
+        ZoneInfo("Asia/Kolkata")
+    )
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
 MAX_FILE_SIZE = 100 * 1024 * 1024
@@ -175,8 +183,9 @@ def index_document(document_id: int) -> None:
 
     try:
         doc = db.query(Document).filter(Document.id == document_id).first()
+    #Added return False
         if not doc or should_abort_indexing(document_id, db):
-            return
+            return False
 
         logger.info(f"Starting indexing for document {doc.id}: {doc.filename}")
         doc.status = "Processing"
@@ -184,17 +193,19 @@ def index_document(document_id: int) -> None:
 
         if should_abort_indexing(document_id, db):
             return
-
-        path = Path(settings.upload_dir) / doc.stored_filename
+#Added changed with actual storage location
+        path = Path(settings.upload_dir) / doc.stored_filename         
         if not path.exists():
             doc.status = "Failed"
             doc.error_message = "Uploaded file not found."
             db.commit()
-            return
+    #Added false to return stmt
+            return False
 
         # Core file parsing
         result = extract_document(path, doc.filename, doc.document_type)
-
+    #Added to print
+        print(f"Extracted {len(result.chunks)} chunks")
         if should_abort_indexing(document_id, db):
             return
 
@@ -202,7 +213,8 @@ def index_document(document_id: int) -> None:
             doc.status = "Failed"
             doc.error_message = "No searchable content found."
             db.commit()
-            return
+    #Added false
+            return False
 
         # FIXED: Clean up vector database elements *before* writing new data to prevent duplicates
         try:
@@ -211,11 +223,13 @@ def index_document(document_id: int) -> None:
             pass
 
         if should_abort_indexing(document_id, db):
-            return
+    #Added false
+            return False
 
         # Perform the vector write operations
         vector_store.add_document_chunks(document_id, result.chunks)
-
+#Added to print
+        print("Stored chunks in ChromaDB")
         # FIXED: Re-verify database record existence right after vector extraction pipeline executions
         if should_abort_indexing(document_id, db):
             try:
@@ -226,6 +240,10 @@ def index_document(document_id: int) -> None:
             return
 
         doc.status = "Indexed"
+    #Added the processed time
+        doc.processed_at = indian_time()
+    #Added to see indexing complteted
+        print("Indexing Complete")
         doc.chunk_count = len(result.chunks)
         doc.page_count = result.page_count
         doc.table_count = result.table_count
@@ -233,6 +251,8 @@ def index_document(document_id: int) -> None:
         db.commit()
         
         logger.info(f"Successfully indexed document {document_id}")
+        #Added true
+        return True
 
     except Exception as exc:
         logger.exception(f"Indexing failed for document {document_id}: {str(exc)}")
@@ -245,6 +265,8 @@ def index_document(document_id: int) -> None:
                 db.commit()
         except Exception:
             db.rollback()
+    #Added false after exception
+        return False
     finally:
         clear_index_cancelled(document_id)
         db.close()
@@ -301,10 +323,11 @@ async def upload_documents(
             destination.unlink(missing_ok=True)
             created.append(duplicate)
             continue
-
+#Added document location
         doc = Document(
             filename=file.filename or destination.name,
             stored_filename=stored_filename,
+            storage_path=str(destination),
             content_hash=content_hash,
             document_type=suffix.lstrip("."),
             size_bytes=size,
@@ -381,10 +404,16 @@ async def view_document_for_user(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+#Added changes in the file path
+    file_path = Path(settings.processed_folder) / doc.stored_filename
 
-    file_path = Path(settings.upload_dir) / doc.stored_filename
+#Added changed file path-1
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(
+            status_code=404,
+            detail="File not found"
+        )
 
     media_type, _ = mimetypes.guess_type(str(file_path))
     if not media_type:
@@ -409,8 +438,15 @@ async def public_view_document(
             status_code=404,
             detail="Document not found"
         )
-
-    file_path = Path(settings.upload_dir) / doc.stored_filename
+#Added changed the path-2
+    print("========== PUBLIC OPEN ==========")
+    print("Document ID :", doc.id)
+    print("Filename    :", doc.filename)
+    print("StoragePath :", doc.storage_path)
+    print("Stored Name :", doc.stored_filename)
+    print("================================")
+    
+    file_path = Path(settings.processed_folder) / doc.stored_filename
 
     if not file_path.exists():
         raise HTTPException(
@@ -455,10 +491,14 @@ async def download_document(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+#Added chenged path-3
+    file_path = Path(settings.processed_folder) / doc.stored_filename
 
-    file_path = Path(settings.upload_dir) / doc.stored_filename
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(
+            status_code=404,
+            detail="File not found"
+        )
 
     media_type, _ = mimetypes.guess_type(str(file_path))
     if not media_type:
@@ -487,8 +527,8 @@ async def delete_document(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    file_path = Path(settings.upload_dir) / doc.stored_filename
+#Added changed path-4
+    file_path = Path(settings.processed_folder) / doc.stored_filename
     filename = doc.filename
     was_processing = doc.status == "Processing"
 
@@ -542,3 +582,4 @@ async def delete_document(
         db.rollback()
         logger.exception(f"Delete failed: {str(exc)}")
         raise HTTPException(status_code=500, detail="Failed to delete document")
+    

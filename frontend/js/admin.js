@@ -258,19 +258,36 @@ function formatDate(dateString) {
 
 }
 
+// Added made changes
 function userStatus(status) {
 
-  if (status === "Indexed") {
+  if (status === "Processed") {
     return "Processed";
   }
 
-  return status || "Uploaded";
+  if (status === "Indexed") {
+    return "Processing Complete";
+  }
+
+  if (status === "Processing") {
+    return "Processing";
+  }
+
+  if (status === "Failed") {
+    return "Failed";
+  }
+
+  return "Uploaded";
 
 }
 
+//Added made changes to add the processed
 function indexingStatus(status) {
 
-  if (status === "Indexed") {
+  if (
+    status === "Indexed" ||
+    status === "Processed"
+  ) {
 
     return `
       <span class="status success">

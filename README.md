@@ -1,11 +1,27 @@
-# NRSC Documents Knowledge Expert System
+# Knowledge Expert System (RAG)
 
-The NRSC Documents Knowledge Expert System is an AI-powered document question-answering system developed during my internship at the National Remote Sensing Centre (NRSC), ISRO, Hyderabad.
+A configurable Retrieval-Augmented Generation (RAG) based Knowledge Expert System developed during my internship at the National Remote Sensing Centre (NRSC), ISRO, Hyderabad.
 
-The project is based on Retrieval-Augmented Generation (RAG) and enables users to upload documents, index their contents, and interact with them using natural language queries. The system retrieves relevant information from uploaded documents and generates grounded responses using a locally hosted Large Language Model (LLM).
+The system enables semantic document retrieval, grounded question answering, and reusable chatbot integration for digital library websites.
 
-The application is designed to work completely offline, ensuring data privacy and secure document processing.
+# AI Capabilities
+## Reusable Chatbot Widget
 
+The project includes a configurable chatbot widget that can be embedded into multiple digital library websites with minimal code changes.
+
+### Widget Features
+
+- Floating chatbot interface
+- Responsive design
+- Minimize / Maximize support
+- Source citation chips
+- Direct PDF page navigation
+- Configurable API endpoints
+- Reusable frontend component
+- Plug-and-play integration
+* General knowledge fallback for out-of-context questions
+* Clickable document source references
+* Configurable widget for external library websites
 
 ## Objectives
 
@@ -45,6 +61,9 @@ The application is designed to work completely offline, ensuring data privacy an
 * Table extraction from documents
 * Automatic text cleaning and preprocessing
 * Semantic document chunking
+* Automated document ingestion from configurable source folders
+* Duplicate document detection using SHA-256 hashing
+* Automatic movement of successfully processed documents to a processed folder
 
 ### AI Capabilities
 
@@ -108,22 +127,112 @@ Used for generating natural language answers from retrieved document context whi
 
 Alternative models such as Phi-3 Mini and TinyLlama can also be configured.
 
+## Running the Project
 
+### Backend
+
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+Backend runs on
+
+```
+http://127.0.0.1:8000
+```
+---
+
+### Admin Dashboard
+
+```
+http://127.0.0.1:8000/admin.html
+```
+---
+
+### Widget Demo
+
+```
+http://127.0.0.1:8000/widget-demo.html
+```
+# Widget Integration
+
+The chatbot widget has been designed as a reusable frontend component.
+
+Files required for integration:
+
+```
+frontend/widget/
+    nrsc-assistant.js
+    nrsc-assistant.css
+```
+
+To integrate the widget into another website:
+
+1. Copy the widget folder.
+2. Include the CSS and JavaScript files.
+3. Configure the backend API endpoints.
+4. Initialize the widget.
+
+Only the API configuration needs to be updated for a new deployment. No backend code changes are required.
+
+# Configuration
+
+The widget is configurable through a single configuration object.
+
+Example:
+
+- Backend API URL
+- Chat endpoint
+- Document endpoint
+- Widget title
+- Default LLM model
+
+This design minimizes deployment effort when integrating the chatbot into different digital library systems.
+
+## Document Ingestion Configuration
+
+The document ingestion pipeline uses configurable folders defined in the backend environment file.
+
+Update the following variables in:
+
+**backend/.env**
+```env
+SOURCE_FOLDER=C:/RAG/source_documents
+PROCESSED_FOLDER=C:/RAG/processed_documents
+UPLOAD_DIR=backend/uploads
+```
+### Folder Description
+
+| Folder |                 | Purpose |
+| SOURCE_FOLDER |          |Place new PDF documents here for processing |
+| PROCESSED_FOLDER |       |Successfully indexed documents are moved here |
+| UPLOAD_DIR |             |Temporary storage used by the application before indexing |
+
+## Automated Document Workflow
+
+1. Copy PDF documents into the configured `SOURCE_FOLDER`.
+2. Run the library processing script.
+3. The documents are copied into the application's upload directory.
+4. Duplicate documents are automatically detected using SHA-256 hashing.
+5. New documents are indexed into ChromaDB.
+6. Successfully indexed documents are moved to the configured `PROCESSED_FOLDER` and are removed from the 'SOURCE_FOLDER'.
+7. The chatbot can immediately retrieve information from the newly indexed documents.
 
 ## System Workflow
-
-1. User uploads documents.
-2. Documents are processed and cleaned.
-3. Text is divided into semantic chunks.
-4. Embeddings are generated for each chunk.
-5. Embeddings are stored in ChromaDB.
-6. User submits a question.
-7. Relevant chunks are retrieved using semantic search.
-8. Retrieved context is passed to the LLM.
-9. The LLM generates a grounded response.
-10. Relevant source citations are displayed to the user.
-
-
+1. Administrator places documents in the configured source folder.
+2. The library processor scans the source folder.
+3. Duplicate documents are identified using SHA-256 hashing.
+4. New documents are copied into the application upload directory.
+5. Documents are processed and cleaned.
+6. Text is divided into semantic chunks.
+7. Embeddings are generated.
+8. Embeddings are stored in ChromaDB.
+9. Successfully indexed documents are moved to the processed folder.
+10. Users submit questions.
+11. Relevant chunks are retrieved.
+12. The LLM generates grounded responses.
+13. Source citations are displayed.
 
 ## Supported File Formats
 
@@ -131,37 +240,94 @@ Alternative models such as Phi-3 Mini and TinyLlama can also be configured.
 * DOCX
 * TXT
 
-
-
 ## Project Structure
 
 ```text
-backend/
+Knowledge-Expert-System/
 │
-├── app/
-│   ├── config/
-│   ├── models/
-│   ├── rag/
-│   ├── routes/
-│   ├── services/
-│   └── utils/
+├── backend/
+│   ├── app/
+│   │   ├── config/
+│   │   ├── models/
+│   │   ├── rag/
+│   │   ├── routes/
+│   │   ├── schemas/
+│   │   ├── services/
+│   │   └── utils/
+│   │
+│   ├── requirements.txt
+│   └── .env.example
 │
-frontend/
+├── frontend/
+│   ├── css/
+│   ├── js/
+│   ├── widget/
+│   │   ├── nrsc-assistant.js
+│   │   └── nrsc-assistant.css
+│   │
+│   ├── admin.html
+│   └── widget-demo.html
 │
-├── css/
-├── js/
-└── pages/
+├── README.md
+└── .gitignore
 ```
 
-
-
 ## How to Run
-
-1. Install Python dependencies.
+### Prerequisites
+1. Install the required Python dependencies.
 2. Install and start Ollama.
-3. Download the required LLM model.
-4. Configure environment variables.
-5. Start the FastAPI backend.
-6. Open the frontend application.
-7. Upload documents and begin querying.
+3. Download the required LLM model (e.g., Llama 3.2 3B).
+4. Clone the repository.
+### Step 1: Configure the Environment
+Edit the following file:
 
+**backend/.env**
+Configure the required folder paths:
+```env
+SOURCE_FOLDER=C:/RAG/source_documents
+PROCESSED_FOLDER=C:/RAG/processed_documents
+UPLOAD_DIR=backend/uploads
+```
+Create the `SOURCE_FOLDER` and `PROCESSED_FOLDER` directories if they do not already exist.
+
+### Step 2: Start the Backend Server
+
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+The backend will be available at:
+
+```text
+http://127.0.0.1:8000
+```
+### Step 3: Process Library Documents
+Copy the PDF files you want to index into the configured `SOURCE_FOLDER`.
+Run the document processing script:
+```bash
+python library_processor.py
+```
+The script will:
+
+- Detect all PDF files in the source folder.
+- Skip duplicate documents using SHA-256 hashing.
+- Copy new documents into the upload directory.
+- Process and index the documents into ChromaDB.
+- Move successfully indexed documents to the processed folder.
+
+### Step 4: Launch the Frontend
+
+Open one of the following pages in your browser:
+
+**Admin Dashboard**
+
+```text
+http://127.0.0.1:8000/admin.html
+```
+
+**Widget Demo**
+
+```text
+http://127.0.0.1:8000/widget-demo.html
+```
+You can now upload documents through the admin interface or interact with the chatbot using the widget.

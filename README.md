@@ -61,6 +61,9 @@ The project includes a configurable chatbot widget that can be embedded into mul
 * Table extraction from documents
 * Automatic text cleaning and preprocessing
 * Semantic document chunking
+* Automated document ingestion from configurable source folders
+* Duplicate document detection using SHA-256 hashing
+* Automatic movement of successfully processed documents to a processed folder
 
 ### AI Capabilities
 
@@ -187,20 +190,49 @@ Example:
 
 This design minimizes deployment effort when integrating the chatbot into different digital library systems.
 
+## Document Ingestion Configuration
+
+The document ingestion pipeline uses configurable folders defined in the backend environment file.
+
+Update the following variables in:
+
+**backend/.env**
+```env
+SOURCE_FOLDER=C:/RAG/source_documents
+PROCESSED_FOLDER=C:/RAG/processed_documents
+UPLOAD_DIR=backend/uploads
+```
+### Folder Description
+
+| Folder |                 | Purpose |
+| SOURCE_FOLDER |          |Place new PDF documents here for processing |
+| PROCESSED_FOLDER |       |Successfully indexed documents are moved here |
+| UPLOAD_DIR |             |Temporary storage used by the application before indexing |
+
+## Automated Document Workflow
+
+1. Copy PDF documents into the configured `SOURCE_FOLDER`.
+2. Run the library processing script.
+3. The documents are copied into the application's upload directory.
+4. Duplicate documents are automatically detected using SHA-256 hashing.
+5. New documents are indexed into ChromaDB.
+6. Successfully indexed documents are moved to the configured `PROCESSED_FOLDER` and are removed from the 'SOURCE_FOLDER'.
+7. The chatbot can immediately retrieve information from the newly indexed documents.
+
 ## System Workflow
-
-1. User uploads documents.
-2. Documents are processed and cleaned.
-3. Text is divided into semantic chunks.
-4. Embeddings are generated for each chunk.
-5. Embeddings are stored in ChromaDB.
-6. User submits a question.
-7. Relevant chunks are retrieved using semantic search.
-8. Retrieved context is passed to the LLM.
-9. The LLM generates a grounded response.
-10. Relevant source citations are displayed to the user.
-
-
+1. Administrator places documents in the configured source folder.
+2. The library processor scans the source folder.
+3. Duplicate documents are identified using SHA-256 hashing.
+4. New documents are copied into the application upload directory.
+5. Documents are processed and cleaned.
+6. Text is divided into semantic chunks.
+7. Embeddings are generated.
+8. Embeddings are stored in ChromaDB.
+9. Successfully indexed documents are moved to the processed folder.
+10. Users submit questions.
+11. Relevant chunks are retrieved.
+12. The LLM generates grounded responses.
+13. Source citations are displayed.
 
 ## Supported File Formats
 
@@ -241,12 +273,61 @@ Knowledge-Expert-System/
 ```
 
 ## How to Run
-
-1. Install Python dependencies.
+### Prerequisites
+1. Install the required Python dependencies.
 2. Install and start Ollama.
-3. Download the required LLM model.
-4. Configure environment variables.
-5. Start the FastAPI backend.
-6. Open the frontend application.
-7. Upload documents and begin querying.
+3. Download the required LLM model (e.g., Llama 3.2 3B).
+4. Clone the repository.
+### Step 1: Configure the Environment
+Edit the following file:
 
+**backend/.env**
+Configure the required folder paths:
+```env
+SOURCE_FOLDER=C:/RAG/source_documents
+PROCESSED_FOLDER=C:/RAG/processed_documents
+UPLOAD_DIR=backend/uploads
+```
+Create the `SOURCE_FOLDER` and `PROCESSED_FOLDER` directories if they do not already exist.
+
+### Step 2: Start the Backend Server
+
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+The backend will be available at:
+
+```text
+http://127.0.0.1:8000
+```
+### Step 3: Process Library Documents
+Copy the PDF files you want to index into the configured `SOURCE_FOLDER`.
+Run the document processing script:
+```bash
+python library_processor.py
+```
+The script will:
+
+- Detect all PDF files in the source folder.
+- Skip duplicate documents using SHA-256 hashing.
+- Copy new documents into the upload directory.
+- Process and index the documents into ChromaDB.
+- Move successfully indexed documents to the processed folder.
+
+### Step 4: Launch the Frontend
+
+Open one of the following pages in your browser:
+
+**Admin Dashboard**
+
+```text
+http://127.0.0.1:8000/admin.html
+```
+
+**Widget Demo**
+
+```text
+http://127.0.0.1:8000/widget-demo.html
+```
+You can now upload documents through the admin interface or interact with the chatbot using the widget.

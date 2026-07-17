@@ -190,6 +190,20 @@ Example:
 
 This design minimizes deployment effort when integrating the chatbot into different digital library systems.
 
+## Environment Configuration
+
+The project uses environment variables for configuration.
+
+A sample configuration file, `.env.example`, is included in the repository.
+
+Before running the project:
+
+1. Copy `.env.example`.
+2. Rename the copied file to `.env`.
+3. Update the configuration values according to your local system.
+
+Only the document folder paths typically need to be changed for a new deployment.
+
 ## Document Ingestion Configuration
 
 The document ingestion pipeline uses configurable folders defined in the backend environment file.
